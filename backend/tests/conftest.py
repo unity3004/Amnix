@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 import app.models  # noqa: F401  (registers models on Base.metadata)
 from app.core.config import get_settings
 from app.core.database import Base
+from app.models.alert import Alert
 from app.models.security_event import SecurityEvent
 
 
@@ -97,5 +98,37 @@ def event_factory():
         }
         defaults.update(overrides)
         return SecurityEvent(**defaults)
+
+    return _make
+
+
+@pytest.fixture
+def alert_factory():
+    """Build transient (unpersisted) Alert instances for investigation
+    engine unit tests, which operate purely in memory and need no
+    database. `security_events` may be passed a list of (also transient)
+    SecurityEvent instances directly — SQLAlchemy relationship
+    collections work as plain Python lists on unpersisted objects.
+    """
+
+    def _make(**overrides) -> Alert:
+        now = datetime.now(timezone.utc)
+        defaults = {
+            "id": uuid.uuid4(),
+            "rule_id": "brute_force_authentication",
+            "title": "Test alert",
+            "description": "Test alert description.",
+            "severity": "high",
+            "confidence": "high",
+            "status": "new",
+            "first_seen": now,
+            "last_seen": now,
+            "created_at": now,
+            "updated_at": now,
+            "evidence": {},
+            "security_events": [],
+        }
+        defaults.update(overrides)
+        return Alert(**defaults)
 
     return _make
