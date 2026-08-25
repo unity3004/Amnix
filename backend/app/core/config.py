@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     redis_password: str = Field(default="")
     redis_db: int = Field(default=0)
 
+    # Detection engine
+    brute_force_threshold: int = Field(default=5)
+    brute_force_window_seconds: int = Field(default=300)
+
     @property
     def database_url(self) -> str:
         return (
