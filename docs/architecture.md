@@ -6,7 +6,7 @@ MITRE ATT&CK mapping, and response recommendations.
 
 ## Core Components
 
-- React Frontend
+- React Frontend (implemented starting Step 12A — see `docs/frontend.md`)
 - FastAPI Backend
 - PostgreSQL
 - Redis

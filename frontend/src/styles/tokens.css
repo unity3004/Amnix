@@ -1,0 +1,140 @@
+/*
+ * AMNIX Design System — Tokens
+ * ============================
+ *
+ * Shared design DNA with KANZ (dark enterprise security aesthetic,
+ * restrained cyan/blue technology accents, layered dark surfaces, thin
+ * technical borders) established independently here: the KANZ
+ * repository/frontend was not present anywhere on this machine at the
+ * time this was written (searched the full user profile and this
+ * workspace — see the Step 12A final report's Discovery section), so
+ * no KANZ value was copied or reverse-engineered. These are original
+ * AMNIX values chosen to be recognizably compatible with that
+ * direction, not identical to it.
+ *
+ * AMNIX's own personality layered on top of that shared base: it should
+ * feel more ALIVE than a secrets vault — severity color is a first-class
+ * citizen, and a restrained glow is reserved for things that are
+ * actually active (live status, critical alerts, the focused nav item)
+ * rather than applied decoratively.
+ *
+ * Every value a component needs lives here. No component should ever
+ * hardcode a raw hex color, spacing value, radius, or duration.
+ */
+
+@theme {
+  /* ---- Surfaces (darkest to lightest) ---- */
+  --color-bg: #090c11;
+  --color-bg-inset: #06080c;
+  --color-surface: #10141b;
+  --color-surface-elevated: #161b24;
+  --color-surface-hover: #1a212c;
+
+  /* ---- Borders ---- */
+  --color-border: #212836;
+  --color-border-strong: #2c3648;
+  --color-border-faint: #171d28;
+
+  /* ---- Brand / accent ---- */
+  --color-accent: #2dd4e0;
+  --color-accent-strong: #5ee8f0;
+  --color-accent-dim: #123840;
+  --color-secondary: #6d8ffb;
+  --color-secondary-dim: #1c2647;
+
+  /* ---- Text (named "fg" not "text" so Tailwind utilities read
+     text-fg / text-fg-muted rather than the stuttering text-text-*) ---- */
+  --color-fg: #e7edf6;
+  --color-fg-muted: #97a3b8;
+  --color-fg-subtle: #5c6779;
+  --color-fg-inverse: #05070a;
+
+  /* ---- Semantic status ---- */
+  --color-success: #35d399;
+  --color-success-dim: #0f2e26;
+  --color-warning: #f0b93c;
+  --color-warning-dim: #362808;
+  --color-danger: #f2495c;
+  --color-danger-dim: #3a1420;
+
+  /* ---- Severity scale (distinct from accent so it never gets lost) ---- */
+  --color-critical: #f23557;
+  --color-critical-dim: #341019;
+  --color-high: #f2823c;
+  --color-high-dim: #33200c;
+  --color-medium: #efc23c;
+  --color-medium-dim: #33280c;
+  --color-low: #6d90c4;
+  --color-low-dim: #182234;
+
+  /* ---- Typography ---- */
+  --font-sans:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* ---- Radius (restrained — never pill-shaped by default) ---- */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.125rem;
+
+  /* ---- Motion ---- */
+  --ease-out-premium: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+
+  /* ---- Shadows (soft, dark-appropriate; glow is opt-in per component) ---- */
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+  --shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.5), 0 16px 40px -12px rgba(0, 0, 0, 0.6);
+
+  /* Fonts registered under Tailwind's default font-family utility names too */
+  --font-family-sans: var(--font-sans);
+  --font-family-mono: var(--font-mono);
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  * {
+    border-color: var(--color-border);
+  }
+
+  html,
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--color-accent-dim);
+    color: var(--color-accent-strong);
+  }
+
+  /* Visible, consistent focus ring everywhere — never suppressed. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
