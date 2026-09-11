@@ -1,5 +1,6 @@
 import { apiRequest } from './httpClient'
 import type {
+  AlertListResponse,
   AlertRead,
   AlertStatus,
   CopilotAuditListResponse,
@@ -7,10 +8,23 @@ import type {
   CopilotFollowUpResponse,
   CopilotResponse,
   InvestigationContext,
+  ListAlertsParams,
 } from '@/types/api'
 
 export function getAlert(alertId: string): Promise<AlertRead> {
   return apiRequest<AlertRead>(`/alerts/${alertId}`, { auth: true })
+}
+
+/** GET /alerts (Step 12B). Bounded, newest-first. See ListAlertsParams
+ * for the exact filter set the backend actually supports.
+ */
+export function listAlerts(params: ListAlertsParams = {}): Promise<AlertListResponse> {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, String(value))
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return apiRequest<AlertListResponse>(`/alerts${suffix}`, { auth: true })
 }
 
 export function updateAlertStatus(alertId: string, status: AlertStatus): Promise<AlertRead> {

@@ -83,6 +83,27 @@ export interface SecurityEventRead extends SecurityEventCreate {
   created_at: string
 }
 
+/** GET /events (Step 12B, backend/app/schemas/security_event.py::SecurityEventListResponse).
+ * No `total` field exists -- the backend deliberately omits it (no
+ * COUNT(*) query) -- `items.length` is only ever the size of THIS
+ * bounded page, never a global count. See dashboardService.ts for how
+ * this is surfaced truthfully in the UI.
+ */
+export interface SecurityEventListResponse {
+  items: SecurityEventRead[]
+  limit: number
+  offset: number
+}
+
+export interface ListEventsParams {
+  limit?: number
+  offset?: number
+  event_type?: string
+  source?: string
+  since?: string
+  until?: string
+}
+
 // ---------------------------------------------------------------------------
 // Alerts (app/schemas/alert.py)
 // ---------------------------------------------------------------------------
@@ -119,6 +140,25 @@ export interface AlertRead {
 
 export interface AlertStatusUpdate {
   status: AlertStatus
+}
+
+/** GET /alerts (Step 12B, backend/app/schemas/alert.py::AlertListResponse).
+ * No `total` field -- same reasoning as SecurityEventListResponse above.
+ */
+export interface AlertListResponse {
+  items: AlertRead[]
+  limit: number
+  offset: number
+}
+
+export interface ListAlertsParams {
+  limit?: number
+  offset?: number
+  status?: AlertStatus
+  severity?: DetectionSeverity
+  rule_id?: string
+  since?: string
+  until?: string
 }
 
 // ---------------------------------------------------------------------------

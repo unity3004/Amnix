@@ -6,7 +6,9 @@ import { AppShell } from '@/layouts/AppShell'
 import { LoginPage } from '@/pages/LoginPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { AlertsPage } from '@/pages/AlertsPage'
+import { AlertDetailPage } from '@/pages/AlertDetailPage'
 import { EventsPage } from '@/pages/EventsPage'
+import { EventDetailPage } from '@/pages/EventDetailPage'
 import { InvestigationsPage } from '@/pages/InvestigationsPage'
 import { CopilotPage } from '@/pages/CopilotPage'
 import { AuditsPage } from '@/pages/AuditsPage'
@@ -36,7 +38,9 @@ export function App() {
               <Route element={<AppShell />}>
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/alerts" element={<AlertsPage />} />
+                <Route path="/alerts/:alertId" element={<AlertDetailPage />} />
                 <Route path="/events" element={<EventsPage />} />
+                <Route path="/events/:eventId" element={<EventDetailPage />} />
                 <Route path="/investigations" element={<InvestigationsPage />} />
                 <Route path="/copilot" element={<CopilotPage />} />
                 <Route path="/audits" element={<AuditsPage />} />
