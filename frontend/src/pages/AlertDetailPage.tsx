@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/Button'
 import { useAlertDetail } from '@/features/alerts/useAlertDetail'
 import { AlertStatusControl } from '@/features/alerts/components/AlertStatusControl'
 import { lookupMitreTechnique } from '@/features/dashboard/mitreRegistry'
+import { explainAlertPriority } from '@/features/alerts/priority'
+import { getRuleDefinition } from '@/features/rules/ruleRegistry'
 
 const STATUS_TONE: Record<string, 'accent' | 'neutral' | 'success' | 'warning'> = {
   new: 'accent',
@@ -56,13 +58,28 @@ export function AlertDetailPage() {
                 <SeverityBadge severity={alert.severity} />
                 <h1 className="mt-2 text-lg font-semibold text-fg">{alert.title}</h1>
                 <p className="mt-1 flex items-center gap-2 font-mono text-xs text-fg-subtle">
-                  {alert.rule_id}
+                  {/* Step 12H: alert -> rule is only a link when the
+                   * rule_id resolves against the real, static rule
+                   * inventory -- an unrecognized rule_id is shown as
+                   * plain text rather than linking to a fabricated
+                   * rule page (see ruleRegistry.ts). */}
+                  {getRuleDefinition(alert.rule_id) ? (
+                    <Link to={`/rules/${alert.rule_id}`} className="text-accent-strong transition-colors duration-fast hover:text-accent">
+                      {alert.rule_id}
+                    </Link>
+                  ) : (
+                    alert.rule_id
+                  )}
                   {lookupMitreTechnique(alert.rule_id) && (
                     <span className="text-accent-strong">
                       · {lookupMitreTechnique(alert.rule_id)!.techniqueId} — {lookupMitreTechnique(alert.rule_id)!.name}
                     </span>
                   )}
                 </p>
+                {/* Explainable triage priority (Step 12G) -- same
+                 * severity/status/recency fields as the Alerts queue,
+                 * never a hidden score. See features/alerts/priority.ts. */}
+                <p className="mt-1 text-xs text-fg-subtle">{explainAlertPriority(alert)}</p>
               </div>
               <Badge tone={STATUS_TONE[alert.status]}>{alert.status}</Badge>
             </div>
@@ -115,12 +132,17 @@ export function AlertDetailPage() {
             )}
           </Card>
 
+          {/* Step 12G: "Investigate Alert" is the primary analyst path
+           * (Alert -> Investigation Workspace -> ... -> Copilot, per the
+           * validated workflow) -- Copilot is also reachable from
+           * inside that workspace, so nothing is lost by making
+           * Investigation the visually primary action here. */}
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Button variant="secondary" className="justify-center" onClick={() => navigate(`/investigations?alert=${alert.id}`)}>
+            <Button variant="primary" className="justify-center" onClick={() => navigate(`/alerts/${alert.id}/investigation`)}>
               <FileSearch className="size-4" strokeWidth={1.75} aria-hidden="true" />
-              View Investigation
+              Investigate Alert
             </Button>
-            <Button variant="primary" className="justify-center" onClick={() => navigate(`/copilot?alert=${alert.id}`)}>
+            <Button variant="secondary" className="justify-center" onClick={() => navigate(`/copilot?alert=${alert.id}`)}>
               <Bot className="size-4" strokeWidth={1.75} aria-hidden="true" />
               Open with Copilot
             </Button>

@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { SeverityBadge, Badge } from '@/components/ui/Badge'
-import { formatRelativeTime } from '@/lib/format'
 import { lookupMitreTechnique } from '@/features/dashboard/mitreRegistry'
+import { explainAlertPriority } from '@/features/alerts/priority'
 import type { AlertRead } from '@/types/api'
 
 const STATUS_TONE: Record<AlertRead['status'], 'accent' | 'neutral' | 'success' | 'warning'> = {
@@ -39,7 +39,12 @@ export function AlertRow({ alert }: { alert: AlertRead }) {
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 sm:shrink-0 sm:justify-end sm:gap-4">
         <Badge tone={STATUS_TONE[alert.status]}>{alert.status}</Badge>
-        <span className="text-xs text-fg-subtle sm:w-24 sm:text-right">First seen {formatRelativeTime(alert.first_seen)}</span>
+        {/* Explainable triage priority (Step 12G) -- severity/status/
+         * recency, the exact same fields the comparator sorts on, never
+         * a hidden score. See features/alerts/priority.ts. */}
+        <span className="text-xs text-fg-subtle sm:text-right" title="Why this alert is prioritized">
+          {explainAlertPriority(alert)}
+        </span>
         <span className="font-mono text-xs text-fg-subtle sm:w-20 sm:text-right">
           {eventCount} event{eventCount === 1 ? '' : 's'}
         </span>

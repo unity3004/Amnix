@@ -129,3 +129,64 @@ describe('AlertsPage', () => {
     expect(screen.queryByText(/128|3,842/)).not.toBeInTheDocument()
   })
 })
+
+describe('AlertsPage triage priority (Step 12G)', () => {
+  it('shows an explainable priority phrase per row, built from real severity/status/recency', async () => {
+    vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(
+      resp([makeAlert({ title: 'Priority marker alert', severity: 'critical', status: 'escalated' })]),
+    )
+    renderWithProviders(<AlertsPage />, { route: '/alerts' })
+
+    const row = await screen.findByRole('button', { name: /Priority marker alert/i })
+    expect(row).toHaveTextContent('Critical severity · Escalated ·')
+  })
+
+  it('defaults to the real backend (newest-first) order and does not reorder rows until priority sort is explicitly selected', async () => {
+    const low = makeAlert({ id: 'low-alert', title: 'Low severity alert', severity: 'low' })
+    const critical = makeAlert({ id: 'critical-alert', title: 'Critical severity alert', severity: 'critical' })
+    vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(resp([low, critical]))
+    renderWithProviders(<AlertsPage />, { route: '/alerts' })
+
+    await screen.findByText('Low severity alert')
+    const rows = screen.getAllByRole('button', { name: /severity alert/i })
+    expect(rows[0]).toHaveTextContent('Low severity alert')
+    expect(rows[1]).toHaveTextContent('Critical severity alert')
+  })
+
+  it('reorders the current page by priority when "Priority (this page)" is selected, with zero additional API requests', async () => {
+    const low = makeAlert({ id: 'low-alert', title: 'Low severity alert', severity: 'low' })
+    const critical = makeAlert({ id: 'critical-alert', title: 'Critical severity alert', severity: 'critical' })
+    const mock = vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(resp([low, critical]))
+    renderWithProviders(<AlertsPage />, { route: '/alerts' })
+    await screen.findByText('Low severity alert')
+    const callsBeforeSort = mock.mock.calls.length
+
+    await userEvent.setup().selectOptions(screen.getByLabelText('Sort'), 'priority')
+
+    const rows = await screen.findAllByRole('button', { name: /severity alert/i })
+    expect(rows[0]).toHaveTextContent('Critical severity alert')
+    expect(rows[1]).toHaveTextContent('Low severity alert')
+    expect(screen.getByText(/priority order applies to this page only/i)).toBeInTheDocument()
+    expect(mock.mock.calls.length).toBe(callsBeforeSort)
+  })
+
+  it('never displays a fabricated risk/threat score anywhere on the alerts queue', async () => {
+    vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(
+      resp([makeAlert({ title: 'Score-free alert', severity: 'critical', status: 'escalated' })]),
+    )
+    renderWithProviders(<AlertsPage />, { route: '/alerts' })
+
+    await screen.findByText('Score-free alert')
+    expect(document.body.textContent).not.toMatch(/risk score|threat score|ai score|probability of attack|\d+%\s*(risk|threat|confidence)/i)
+  })
+
+  it('never renders a remediation/execution control anywhere on the alerts queue', async () => {
+    vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(resp([makeAlert({ title: 'Remediation-free alert' })]))
+    renderWithProviders(<AlertsPage />, { route: '/alerts' })
+
+    await screen.findByText('Remediation-free alert')
+    expect(document.body.textContent).not.toMatch(
+      /isolate host|kill process|block ip|disable account|run command|quarantine host|delete file|remediate/i,
+    )
+  })
+})

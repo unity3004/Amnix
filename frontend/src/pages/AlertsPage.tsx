@@ -11,7 +11,9 @@ import { LiveIndicator } from '@/components/live/LiveIndicator'
 import { RefreshButton } from '@/components/live/RefreshButton'
 import { AlertsFilterToolbar } from '@/features/alerts/components/AlertsFilterToolbar'
 import { AlertRow } from '@/features/alerts/components/AlertRow'
+import { PrioritySortControl, type AlertSortMode } from '@/features/alerts/components/PrioritySortControl'
 import { useAlertsListQuery } from '@/features/alerts/useAlertsListQuery'
+import { compareAlertPriority } from '@/features/alerts/priority'
 import type { AlertsFilters } from '@/features/alerts/types'
 import type { AlertStatus, DetectionSeverity } from '@/types/api'
 
@@ -32,6 +34,12 @@ export function AlertsPage() {
 
   const { alerts, hasNextPage, liveState, lastSuccessfulRefreshAt, isRefreshing, refresh } = useAlertsListQuery(page, filters)
 
+  const sortMode: AlertSortMode = searchParams.get('sort') === 'priority' ? 'priority' : 'recent'
+  const orderedAlerts = useMemo(
+    () => (sortMode === 'priority' ? [...alerts].sort(compareAlertPriority) : alerts),
+    [alerts, sortMode],
+  )
+
   function applyFilters(next: AlertsFilters) {
     const params = new URLSearchParams()
     if (next.status) params.set('status', next.status)
@@ -39,12 +47,20 @@ export function AlertsPage() {
     if (next.rule_id) params.set('rule_id', next.rule_id)
     if (next.since) params.set('since', next.since)
     if (next.until) params.set('until', next.until)
+    if (sortMode === 'priority') params.set('sort', 'priority')
     setSearchParams(params)
   }
 
   function goToPage(nextPage: number) {
     const params = new URLSearchParams(searchParams)
     params.set('page', String(nextPage))
+    setSearchParams(params)
+  }
+
+  function setSortMode(next: AlertSortMode) {
+    const params = new URLSearchParams(searchParams)
+    if (next === 'priority') params.set('sort', 'priority')
+    else params.delete('sort')
     setSearchParams(params)
   }
 
@@ -57,6 +73,7 @@ export function AlertsPage() {
         description="Security detections requiring analyst attention"
         action={
           <div className="flex items-center gap-3">
+            <PrioritySortControl mode={sortMode} onChange={setSortMode} />
             <LiveIndicator state={liveState} lastSuccessfulRefreshAt={lastSuccessfulRefreshAt} />
             <RefreshButton onRefresh={refresh} isRefreshing={isRefreshing} />
           </div>
@@ -82,8 +99,14 @@ export function AlertsPage() {
           />
         ) : (
           <>
+            {sortMode === 'priority' && (
+              <p className="border-b border-border-faint px-5 py-2 text-[11px] text-fg-subtle">
+                Priority order applies to this page only ({orderedAlerts.length} alert{orderedAlerts.length === 1 ? '' : 's'}) — it does not
+                reorder alerts on other pages.
+              </p>
+            )}
             <div>
-              {alerts.map((alert) => (
+              {orderedAlerts.map((alert) => (
                 <AlertRow key={alert.id} alert={alert} />
               ))}
             </div>

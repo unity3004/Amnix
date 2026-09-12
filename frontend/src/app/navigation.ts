@@ -5,6 +5,8 @@ import {
   SearchCode,
   Bot,
   ScrollText,
+  ListChecks,
+  Radio,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -19,6 +21,8 @@ export const primaryNav: NavItem[] = [
   { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, description: 'Security operations overview' },
   { label: 'Alerts', path: '/alerts', icon: ShieldAlert, description: 'Triaged detection output' },
   { label: 'Events', path: '/events', icon: Activity, description: 'Raw security telemetry' },
+  { label: 'Detection Rules', path: '/rules', icon: ListChecks, description: 'Application-controlled detection logic' },
+  { label: 'Telemetry Health', path: '/telemetry', icon: Radio, description: 'Observed telemetry and detection coverage' },
   { label: 'Investigations', path: '/investigations', icon: SearchCode, description: 'Alert-scoped context' },
   { label: 'AI Copilot', path: '/copilot', icon: Bot, description: 'AI-assisted analysis' },
   { label: 'Audit Logs', path: '/audits', icon: ScrollText, description: 'Administrative accountability' },

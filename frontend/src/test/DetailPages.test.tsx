@@ -10,7 +10,7 @@ import { renderWithProviders } from './utils'
 import * as alertsService from '@/services/alertsService'
 import * as eventsService from '@/services/eventsService'
 import { ApiError } from '@/services/httpClient'
-import type { AlertRead, SecurityEventRead, InvestigationContext, CopilotResponse } from '@/types/api'
+import type { AlertRead, SecurityEventRead, CopilotResponse } from '@/types/api'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -93,18 +93,35 @@ describe('AlertDetailPage', () => {
     expect(document.body.textContent).not.toMatch(/traceback|stack/i)
   })
 
-  it('navigates to Investigation and Copilot for the exact alert_id', async () => {
+  it('shows an explainable triage priority line built from real severity/status/recency, no fake score', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert({ severity: 'critical', status: 'escalated' }))
+    renderWithProviders(
+      <Routes>
+        <Route path="/alerts/:alertId" element={<AlertDetailPage />} />
+      </Routes>,
+      { route: '/alerts/alert-detail-1' },
+    )
+
+    await screen.findByText('Brute force authentication detected for jdoe')
+    expect(screen.getByText(/Critical severity · Escalated ·/)).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/risk score|threat score|ai score|probability of attack/i)
+    expect(document.body.textContent).not.toMatch(
+      /isolate host|kill process|block ip|disable account|run command|quarantine host/i,
+    )
+  })
+
+  it('navigates to the Investigation Workspace and Copilot for the exact alert_id', async () => {
     vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
     renderWithProviders(
       <Routes>
         <Route path="/alerts/:alertId" element={<AlertDetailPage />} />
-        <Route path="/investigations" element={<div>INVESTIGATION MARKER</div>} />
+        <Route path="/alerts/:alertId/investigation" element={<div>INVESTIGATION WORKSPACE MARKER</div>} />
       </Routes>,
       { route: '/alerts/alert-detail-1' },
     )
     await screen.findByText('Brute force authentication detected for jdoe')
-    await userEvent.setup().click(screen.getByRole('button', { name: /view investigation/i }))
-    expect(await screen.findByText('INVESTIGATION MARKER')).toBeInTheDocument()
+    await userEvent.setup().click(screen.getByRole('button', { name: /investigate alert/i }))
+    expect(await screen.findByText('INVESTIGATION WORKSPACE MARKER')).toBeInTheDocument()
   })
 })
 
@@ -139,33 +156,16 @@ describe('EventDetailPage', () => {
 })
 
 describe('Investigation and Copilot alert-scoped connections', () => {
-  it('InvestigationsPage fetches and renders REAL investigation data for the exact alert', async () => {
-    const investigation: InvestigationContext = {
-      alert: makeAlert(),
-      timeline: [
-        {
-          event_id: 'event-aaa',
-          event_timestamp: new Date().toISOString(),
-          event_type: 'authentication_failure',
-          source: 'auth-log',
-          hostname: 'workstation-07',
-          username: 'jdoe',
-          source_ip: '10.0.0.5',
-          destination_ip: null,
-          process_name: null,
-          command_line: null,
-        },
-      ],
-      entities: { hostnames: ['workstation-07'], usernames: ['jdoe'], source_ips: ['10.0.0.5'], destination_ips: [], process_names: [], file_hashes: [] },
-      summary: { text: 'Six failed logins observed.', event_count: 6, unique_host_count: 1, unique_user_count: 1, timespan_seconds: 120, first_event_at: null, last_event_at: null },
-      generated_at: new Date().toISOString(),
-    }
-    vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(investigation)
+  it('InvestigationsPage redirects ?alert=<id> to the canonical /alerts/:id/investigation workspace', async () => {
+    renderWithProviders(
+      <Routes>
+        <Route path="/investigations" element={<InvestigationsPage />} />
+        <Route path="/alerts/:alertId/investigation" element={<div>WORKSPACE MARKER for alert-detail-1</div>} />
+      </Routes>,
+      { route: '/investigations?alert=alert-detail-1' },
+    )
 
-    renderWithProviders(<InvestigationsPage />, { route: '/investigations?alert=alert-detail-1' })
-
-    expect(await screen.findByText('Six failed logins observed.')).toBeInTheDocument()
-    expect(alertsService.getAlertInvestigation).toHaveBeenCalledWith('alert-detail-1')
+    expect(await screen.findByText('WORKSPACE MARKER for alert-detail-1')).toBeInTheDocument()
   })
 
   it('InvestigationsPage without an alert param keeps the original placeholder', () => {
