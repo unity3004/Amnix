@@ -7,7 +7,8 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { Button } from '@/components/ui/Button'
 import { useAlertDetail } from '@/features/alerts/useAlertDetail'
 import { AlertStatusControl } from '@/features/alerts/components/AlertStatusControl'
-import { lookupMitreTechnique } from '@/features/dashboard/mitreRegistry'
+import { EvidenceDetailList } from '@/features/alerts/components/EvidenceDetailList'
+import { getMitreTechniquesForRule } from '@/features/dashboard/mitreRegistry'
 import { explainAlertPriority } from '@/features/alerts/priority'
 import { getRuleDefinition } from '@/features/rules/ruleRegistry'
 
@@ -19,10 +20,30 @@ const STATUS_TONE: Record<string, 'accent' | 'neutral' | 'success' | 'warning'> 
   escalated: 'accent',
 }
 
+/** Step 12K: "Why did this alert fire?" -- an explicit, sequential
+ * explanation built entirely from the one GET /alerts/{id} response
+ * this page already fetches (zero additional requests):
+ *
+ *   Rule that fired
+ *     -> Condition detected (rule logic + this alert's own evidence)
+ *     -> Supporting events
+ *     -> MITRE technique(s)
+ *     -> Investigation evidence (CTA into the existing workspace)
+ *
+ * "Detection Rule Logic" (the rule's static, application-controlled
+ * description/logic from ruleRegistry.ts) and "Observed Detection
+ * Evidence" (this alert's real AlertRead.evidence) are kept in clearly
+ * separate, separately-labeled blocks -- the former describes what the
+ * rule generally does, the latter describes what was actually recorded
+ * for THIS alert. Neither is presented as the frontend having
+ * independently evaluated or verified anything.
+ */
 export function AlertDetailPage() {
   const { alertId } = useParams<{ alertId: string }>()
   const navigate = useNavigate()
   const { data: alert, isPending, isError, refetch } = useAlertDetail(alertId)
+  const rule = alert ? getRuleDefinition(alert.rule_id) : null
+  const mitreTechniques = alert ? getMitreTechniquesForRule(alert.rule_id) : []
 
   return (
     <div className="mx-auto max-w-[1000px] px-6 py-6">
@@ -57,28 +78,6 @@ export function AlertDetailPage() {
               <div>
                 <SeverityBadge severity={alert.severity} />
                 <h1 className="mt-2 text-lg font-semibold text-fg">{alert.title}</h1>
-                <p className="mt-1 flex items-center gap-2 font-mono text-xs text-fg-subtle">
-                  {/* Step 12H: alert -> rule is only a link when the
-                   * rule_id resolves against the real, static rule
-                   * inventory -- an unrecognized rule_id is shown as
-                   * plain text rather than linking to a fabricated
-                   * rule page (see ruleRegistry.ts). */}
-                  {getRuleDefinition(alert.rule_id) ? (
-                    <Link to={`/rules/${alert.rule_id}`} className="text-accent-strong transition-colors duration-fast hover:text-accent">
-                      {alert.rule_id}
-                    </Link>
-                  ) : (
-                    alert.rule_id
-                  )}
-                  {lookupMitreTechnique(alert.rule_id) && (
-                    <span className="text-accent-strong">
-                      · {lookupMitreTechnique(alert.rule_id)!.techniqueId} — {lookupMitreTechnique(alert.rule_id)!.name}
-                    </span>
-                  )}
-                </p>
-                {/* Explainable triage priority (Step 12G) -- same
-                 * severity/status/recency fields as the Alerts queue,
-                 * never a hidden score. See features/alerts/priority.ts. */}
                 <p className="mt-1 text-xs text-fg-subtle">{explainAlertPriority(alert)}</p>
               </div>
               <Badge tone={STATUS_TONE[alert.status]}>{alert.status}</Badge>
@@ -111,8 +110,51 @@ export function AlertDetailPage() {
             </div>
           </Card>
 
+          {/* ---- Step 1: Rule that fired ---- */}
+          <Card className="mt-4 p-6">
+            <p className="text-[11px] uppercase tracking-wide text-fg-subtle">Detection Rule</p>
+            <p className="mt-1.5 flex flex-wrap items-center gap-2">
+              {rule ? (
+                <Link to={`/rules/${alert.rule_id}`} className="text-sm font-medium text-accent-strong transition-colors duration-fast hover:text-accent">
+                  {rule.name}
+                </Link>
+              ) : (
+                <span className="text-sm font-medium text-fg" title="Unrecognized rule_id -- shown as-is, never a fabricated name">
+                  {alert.rule_id}
+                </span>
+              )}
+              <span className="font-mono text-[11px] text-fg-subtle">{alert.rule_id}</span>
+            </p>
+          </Card>
+
+          {/* ---- Step 2: Condition detected ---- */}
+          <Card className="mt-4 p-6">
+            <p className="text-sm font-semibold text-fg">Why This Alert Fired</p>
+
+            <div className="mt-4">
+              <p className="text-[11px] uppercase tracking-wide text-fg-subtle">
+                Detection Rule Logic <span className="normal-case text-fg-subtle/70">(application-controlled rule context, not proof of independent verification)</span>
+              </p>
+              {rule ? (
+                <p className="mt-1.5 text-sm text-fg-muted">{rule.detectionLogic}</p>
+              ) : (
+                <p className="mt-1.5 text-xs text-fg-subtle">No rule context is available for "{alert.rule_id}" in the current registry.</p>
+              )}
+            </div>
+
+            <div className="mt-4 border-t border-border pt-4">
+              <p className="text-[11px] uppercase tracking-wide text-fg-subtle">
+                Observed Detection Evidence <span className="normal-case text-fg-subtle/70">(real data captured for this alert)</span>
+              </p>
+              <div className="mt-1.5">
+                <EvidenceDetailList evidence={alert.evidence} />
+              </div>
+            </div>
+          </Card>
+
+          {/* ---- Step 3: Supporting events ---- */}
           <Card className="mt-4 overflow-hidden">
-            <CardHeader title="Related Events" subtitle={`${alert.source_event_ids.length} source event(s) cited as evidence`} />
+            <CardHeader title="Supporting Events" subtitle={`${alert.source_event_ids.length} source event(s) cited as evidence`} />
             {alert.source_event_ids.length === 0 ? (
               <p className="px-5 pb-5 text-xs text-fg-subtle">No source events recorded for this alert.</p>
             ) : (
@@ -132,11 +174,28 @@ export function AlertDetailPage() {
             )}
           </Card>
 
-          {/* Step 12G: "Investigate Alert" is the primary analyst path
-           * (Alert -> Investigation Workspace -> ... -> Copilot, per the
-           * validated workflow) -- Copilot is also reachable from
-           * inside that workspace, so nothing is lost by making
-           * Investigation the visually primary action here. */}
+          {/* ---- Step 4: MITRE technique(s) ---- */}
+          <Card className="mt-4 p-6">
+            <CardHeader title="MITRE ATT&CK Technique(s)" subtitle="Candidates based on the detection rule -- not independently verified" />
+            {mitreTechniques.length === 0 ? (
+              <p className="px-5 pb-5 text-xs text-fg-subtle">No MITRE ATT&CK mapping exists for rule "{alert.rule_id}".</p>
+            ) : (
+              <ul className="flex flex-col gap-2 px-5 pb-5">
+                {mitreTechniques.map((technique) => (
+                  <li key={technique.techniqueId} className="flex items-center justify-between rounded-md border border-border-faint bg-bg-inset px-3 py-2">
+                    <div>
+                      <p className="font-mono text-xs font-semibold text-accent-strong">{technique.techniqueId}</p>
+                      <p className="mt-0.5 text-sm text-fg">{technique.name}</p>
+                    </div>
+                    <Badge tone="neutral">{technique.tactic}</Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          {/* ---- Step 5: Investigation evidence (CTA into the existing
+           * Investigation Workspace -- not duplicated here). ---- */}
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Button variant="primary" className="justify-center" onClick={() => navigate(`/alerts/${alert.id}/investigation`)}>
               <FileSearch className="size-4" strokeWidth={1.75} aria-hidden="true" />

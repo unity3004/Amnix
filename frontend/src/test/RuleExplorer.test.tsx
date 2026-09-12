@@ -221,10 +221,13 @@ describe('Alert -> Rule navigation', () => {
       { route: '/alerts/alert-1' },
     )
 
-    const ruleLink = await screen.findByRole('link', { name: 'brute_force_authentication' })
+    const ruleLink = await screen.findByRole('link', { name: 'Brute Force Authentication' })
     expect(ruleLink).toHaveAttribute('href', '/rules/brute_force_authentication')
+    expect(screen.getByText('brute_force_authentication')).toBeInTheDocument()
+
     await userEvent.setup().click(ruleLink)
-    expect(await screen.findByText('Brute Force Authentication')).toBeInTheDocument()
+    expect(await screen.findByText('brute_force_authentication')).toBeInTheDocument()
+    expect(screen.getAllByText('Brute Force Authentication').length).toBeGreaterThan(0)
   })
 
   it('shows an unresolvable rule_id as plain text, never a fabricated rule link', async () => {
@@ -236,7 +239,8 @@ describe('Alert -> Rule navigation', () => {
       { route: '/alerts/alert-1' },
     )
 
-    await screen.findByText('future_unmapped_rule')
+    const matches = await screen.findAllByText('future_unmapped_rule')
+    expect(matches.length).toBeGreaterThan(0)
     expect(screen.queryByRole('link', { name: 'future_unmapped_rule' })).not.toBeInTheDocument()
   })
 })
