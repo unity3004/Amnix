@@ -30,8 +30,26 @@ def client(db_session):
 
     app.dependency_overrides[get_db] = _override_get_db
     with TestClient(app) as test_client:
+        _authenticate(test_client)
         yield test_client
     app.dependency_overrides.clear()
+
+
+def _authenticate(test_client: TestClient) -> None:
+    """Step 11E: every route this file exercises now requires a Bearer
+    access token. Registers + logs in one throwaway test user per test
+    client and attaches the resulting access token to every subsequent
+    request that client makes, so existing tests keep exercising
+    business logic without each one individually managing
+    authentication -- see app.api.dependencies.get_current_user.
+    """
+    email = f"test-client-{uuid.uuid4().hex[:8]}@example.com"
+    password = "correct horse battery staple"
+    register_response = test_client.post("/auth/register", json={"email": email, "password": password})
+    assert register_response.status_code == 201, register_response.text
+    login_response = test_client.post("/auth/login", json={"email": email, "password": password})
+    assert login_response.status_code == 200, login_response.text
+    test_client.headers["Authorization"] = f"Bearer {login_response.json()['access_token']}"
 
 
 def _make_event(db_session, **overrides) -> SecurityEvent:

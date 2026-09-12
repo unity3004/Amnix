@@ -1,10 +1,12 @@
 """Business logic for creating, retrieving, and transitioning Alerts."""
 
 import uuid
+from datetime import datetime
 
 from app.models.alert import Alert
 from app.repositories.alert import AlertRepository
 from app.schemas.alert import AlertCreate, AlertStatus
+from app.schemas.detection import DetectionSeverity
 from app.services.alert_lifecycle import assert_valid_transition
 
 
@@ -60,6 +62,34 @@ class AlertService:
 
     def get_with_events(self, alert_id: uuid.UUID) -> Alert | None:
         return self._repository.get_by_id_with_events(alert_id)
+
+    def list_recent(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        status: AlertStatus | None = None,
+        severity: DetectionSeverity | None = None,
+        rule_id: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> list[Alert]:
+        """Thin passthrough to AlertRepository.list_recent() — Dashboard
+        Data Foundation's GET /alerts. Converts the typed `status`/
+        `severity` enums to their plain string values at this boundary
+        (mirroring how update_status() above already does `new_status.
+        value` before persisting) — the repository/database layer only
+        ever sees plain strings, exactly like every other Alert column.
+        """
+        return self._repository.list_recent(
+            limit=limit,
+            offset=offset,
+            status=status.value if status is not None else None,
+            severity=severity.value if severity is not None else None,
+            rule_id=rule_id,
+            since=since,
+            until=until,
+        )
 
     def update_status(self, alert_id: uuid.UUID, new_status: AlertStatus) -> Alert:
         alert = self._repository.get_by_id(alert_id)

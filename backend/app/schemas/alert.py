@@ -150,3 +150,21 @@ class AlertRead(BaseModel):
     evidence: dict[str, Any]
     alert_metadata: dict[str, Any] | None
     source_event_ids: list[uuid.UUID]
+
+
+class AlertListResponse(BaseModel):
+    """List envelope for GET /alerts (Dashboard Data Foundation).
+    `items` preserves whatever order AlertRepository.list_recent()
+    already returned (newest-first by first_seen, id DESC tie-break) --
+    this schema does not, and must never, re-sort anything. `limit`/
+    `offset` echo back exactly what was requested (post API-layer
+    validation), not a total count -- no COUNT(*) query is performed,
+    mirroring CopilotAuditListResponse/AdminAuditListResponse's own
+    scope decision.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[AlertRead]
+    limit: int
+    offset: int

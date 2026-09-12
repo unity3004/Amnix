@@ -114,3 +114,21 @@ class SecurityEventRead(SecurityEventBase):
 
     id: uuid.UUID
     created_at: datetime
+
+
+class SecurityEventListResponse(BaseModel):
+    """List envelope for GET /events (Dashboard Data Foundation).
+    `items` preserves whatever order SecurityEventRepository.list_recent()
+    already returned (newest-first by event_timestamp, id DESC
+    tie-break) — this schema does not, and must never, re-sort anything.
+    `limit`/`offset` echo back exactly what was requested (post
+    API-layer validation), not a total count — no COUNT(*) query is
+    performed, mirroring CopilotAuditListResponse/AdminAuditListResponse's
+    own scope decision.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[SecurityEventRead]
+    limit: int
+    offset: int
