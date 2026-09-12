@@ -9,6 +9,7 @@ import {
   Radio,
   Gauge,
   BarChart3,
+  Stethoscope,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -26,6 +27,7 @@ export const primaryNav: NavItem[] = [
   { label: 'Detection Rules', path: '/rules', icon: ListChecks, description: 'Application-controlled detection logic' },
   { label: 'Detection Operations', path: '/operations', icon: Gauge, description: 'Recent detection activity and alert priority' },
   { label: 'SOC Metrics', path: '/metrics', icon: BarChart3, description: 'Operational insights from current telemetry' },
+  { label: 'Detection Health', path: '/detection-health', icon: Stethoscope, description: 'Telemetry, rule, and alert observability' },
   { label: 'Telemetry Health', path: '/telemetry', icon: Radio, description: 'Observed telemetry and detection coverage' },
   { label: 'Investigations', path: '/investigations', icon: SearchCode, description: 'Alert-scoped context' },
   { label: 'AI Copilot', path: '/copilot', icon: Bot, description: 'AI-assisted analysis' },
