@@ -3,10 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { listEvents } from '@/services/eventsService'
 import { listAlerts } from '@/services/alertsService'
 import { LIVE_REFRESH_INTERVAL_MS, type LiveQueryState } from '@/lib/liveRefresh'
-
-function windowStart(windowMinutes: number): string {
-  return new Date(Date.now() - windowMinutes * 60_000).toISOString()
-}
+import { OBSERVATION_WINDOW_OPTIONS, windowStart, type ObservationWindowOption } from '@/lib/observationWindow'
 
 /** Step 12I: the one centralized data hook for the Telemetry &
  * Detection Coverage page. Exactly two real backend requests per
@@ -20,16 +17,16 @@ function windowStart(windowMinutes: number): string {
  */
 export const TELEMETRY_PAGE_SIZE = 100
 
-export interface TelemetryWindowOption {
-  label: string
-  minutes: number
-}
+/** @deprecated use ObservationWindowOption from '@/lib/observationWindow' */
+export type TelemetryWindowOption = ObservationWindowOption
 
-export const TELEMETRY_WINDOW_OPTIONS: TelemetryWindowOption[] = [
-  { label: 'Last 15 minutes', minutes: 15 },
-  { label: 'Last hour', minutes: 60 },
-  { label: 'Last 24 hours', minutes: 24 * 60 },
-]
+/** @deprecated use OBSERVATION_WINDOW_OPTIONS from '@/lib/observationWindow'
+ * -- kept as a re-export so this hook's existing public API (and Step
+ * 12I's own page/tests) don't need to change. Step 12J (Detection
+ * Operations) imports the shared constant directly instead of this
+ * alias.
+ */
+export const TELEMETRY_WINDOW_OPTIONS = OBSERVATION_WINDOW_OPTIONS
 
 export function useTelemetryHealth(windowMinutes: number) {
   // `since` is recomputed from the real current time on every fetch --
