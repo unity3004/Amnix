@@ -9,11 +9,13 @@ import { SkeletonRow } from '@/components/ui/Skeleton'
 import { Pagination } from '@/components/ui/Pagination'
 import { LiveIndicator } from '@/components/live/LiveIndicator'
 import { RefreshButton } from '@/components/live/RefreshButton'
+import { SecurityStateBar } from '@/features/dashboard/components/SecurityStateBar'
 import { AlertsFilterToolbar } from '@/features/alerts/components/AlertsFilterToolbar'
 import { AlertRow } from '@/features/alerts/components/AlertRow'
 import { PrioritySortControl, type AlertSortMode } from '@/features/alerts/components/PrioritySortControl'
 import { useAlertsListQuery } from '@/features/alerts/useAlertsListQuery'
 import { compareAlertPriority } from '@/features/alerts/priority'
+import { formatCount } from '@/lib/format'
 import type { AlertsFilters } from '@/features/alerts/types'
 import type { AlertStatus, DetectionSeverity } from '@/types/api'
 
@@ -39,6 +41,15 @@ export function AlertsPage() {
     () => (sortMode === 'priority' ? [...alerts].sort(compareAlertPriority) : alerts),
     [alerts, sortMode],
   )
+
+  /** Step 12M Queue Summary: counts over ONLY the alerts this exact
+   * GET /alerts page/filter combination returned -- never a database
+   * COUNT(*), never a claim about the total SOC backlog. See the
+   * disclaimer text rendered alongside this bar below. */
+  const criticalOrHighCount = alerts.filter((a) => a.severity === 'critical' || a.severity === 'high').length
+  const newCount = alerts.filter((a) => a.status === 'new').length
+  const investigatingCount = alerts.filter((a) => a.status === 'investigating').length
+  const escalatedCount = alerts.filter((a) => a.status === 'escalated').length
 
   function applyFilters(next: AlertsFilters) {
     const params = new URLSearchParams()
@@ -69,8 +80,8 @@ export function AlertsPage() {
   return (
     <div className="mx-auto max-w-[1500px] px-6 py-6">
       <PageHeader
-        title="Alerts"
-        description="Security detections requiring analyst attention"
+        title="Alert Queue"
+        description="Operational alert triage workspace -- alerts returned by the current query, prioritized for analyst review"
         action={
           <div className="flex items-center gap-3">
             <PrioritySortControl mode={sortMode} onChange={setSortMode} />
@@ -80,11 +91,32 @@ export function AlertsPage() {
         }
       />
 
-      <Card className="overflow-hidden">
+      {liveState !== 'loading' && liveState !== 'error' && alerts.length > 0 && (
+        <>
+          {/* Step 12M Queue Summary -- counts only the alerts already
+           * returned by this exact query/page, never a database
+           * COUNT(*) and never presented as the total SOC backlog. */}
+          <SecurityStateBar
+            items={[
+              { label: 'Alerts Returned', value: formatCount(alerts.length) },
+              { label: 'Critical / High', value: formatCount(criticalOrHighCount), tone: criticalOrHighCount > 0 ? 'critical' : 'default' },
+              { label: 'New', value: formatCount(newCount) },
+              { label: 'Investigating', value: formatCount(investigatingCount) },
+              { label: 'Escalated', value: formatCount(escalatedCount) },
+            ]}
+          />
+          <p className="mt-1.5 text-[11px] text-fg-subtle">
+            Summary of alerts returned in this view ({alerts.length} alert{alerts.length === 1 ? '' : 's'} on this page) — not a total SOC
+            backlog.
+          </p>
+        </>
+      )}
+
+      <Card className="mt-4 overflow-hidden">
         <AlertsFilterToolbar filters={filters} onApply={applyFilters} onClear={() => setSearchParams({})} />
 
         {liveState === 'error' ? (
-          <ErrorState title="Unable to retrieve alerts" onRetry={refresh} />
+          <ErrorState title="Alert queue could not be loaded" onRetry={refresh} />
         ) : liveState === 'loading' ? (
           <div>
             {Array.from({ length: 6 }).map((_, i) => (
@@ -94,8 +126,8 @@ export function AlertsPage() {
         ) : alerts.length === 0 ? (
           <EmptyState
             icon={ShieldAlert}
-            title={hasFilters ? 'No alerts match' : 'No security events'}
-            description={hasFilters ? 'No alerts match the current filters.' : 'Waiting for telemetry.'}
+            title={hasFilters ? 'No alerts match the selected filters.' : 'No alerts were returned for this view.'}
+            description={hasFilters ? 'Try clearing or widening the current filters.' : 'Waiting for telemetry, or no alerts exist yet.'}
           />
         ) : (
           <>
@@ -105,11 +137,13 @@ export function AlertsPage() {
                 reorder alerts on other pages.
               </p>
             )}
-            <div>
+            <ul className="list-none">
               {orderedAlerts.map((alert) => (
-                <AlertRow key={alert.id} alert={alert} />
+                <li key={alert.id}>
+                  <AlertRow alert={alert} />
+                </li>
               ))}
-            </div>
+            </ul>
             <Pagination page={page} hasNext={hasNextPage} onPrevious={() => goToPage(page - 1)} onNext={() => goToPage(page + 1)} />
           </>
         )}

@@ -55,28 +55,28 @@ describe('AlertsPage', () => {
   it('shows a distinct empty state for a genuinely empty environment vs. an active filter', async () => {
     vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(resp([]))
     renderWithProviders(<AlertsPage />, { route: '/alerts' })
-    expect(await screen.findByText('No security events')).toBeInTheDocument()
+    expect(await screen.findByText('No alerts were returned for this view.')).toBeInTheDocument()
 
     vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(resp([]))
     renderWithProviders(<AlertsPage />, { route: '/alerts?severity=critical' })
-    expect(await screen.findByText('No alerts match')).toBeInTheDocument()
+    expect(await screen.findByText('No alerts match the selected filters.')).toBeInTheDocument()
   })
 
   it('shows a safe error state on failure, with retry', async () => {
     const mock = vi.spyOn(alertsService, 'listAlerts').mockRejectedValue(new ApiError(500, null, 'boom'))
     renderWithProviders(<AlertsPage />, { route: '/alerts' })
-    expect(await screen.findByText(/unable to retrieve alerts/i)).toBeInTheDocument()
+    expect(await screen.findByText(/alert queue could not be loaded/i)).toBeInTheDocument()
     expect(document.body.textContent).not.toMatch(/ApiError|TypeError|traceback|boom/i)
 
     mock.mockResolvedValue(resp([]))
     await userEvent.setup().click(screen.getByRole('button', { name: /retry/i }))
-    await waitFor(() => expect(screen.getByText('No security events')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('No alerts were returned for this view.')).toBeInTheDocument())
   })
 
   it('applies severity/status/rule_id filters as real backend query parameters', async () => {
     const mock = vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(resp([]))
     renderWithProviders(<AlertsPage />, { route: '/alerts' })
-    await screen.findByText('No security events')
+    await screen.findByText('No alerts were returned for this view.')
 
     const user = userEvent.setup()
     await user.selectOptions(screen.getByLabelText('Status'), 'investigating')
@@ -96,7 +96,11 @@ describe('AlertsPage', () => {
     renderWithProviders(<AlertsPage />, { route: '/alerts' })
     await screen.findByText('Page 1')
 
-    expect(screen.queryByText(/total/i)).not.toBeInTheDocument()
+    // The Queue Summary caption (Step 12M) intentionally contains the
+    // word "total" as part of an honest disclaimer ("not a total SOC
+    // backlog") -- this asserts no FABRICATED total count/page count is
+    // ever shown, not that the word itself never appears.
+    expect(document.body.textContent).not.toMatch(/total alerts:\s*\d+|total:\s*\d[\d,]*|page \d+ of \d+/i)
     await userEvent.setup().click(screen.getByRole('button', { name: /^next$/i }))
 
     await waitFor(() => {
@@ -108,7 +112,7 @@ describe('AlertsPage', () => {
   it('manual refresh re-fetches with the same filters', async () => {
     const mock = vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(resp([]))
     renderWithProviders(<AlertsPage />, { route: '/alerts' })
-    await screen.findByText('No security events')
+    await screen.findByText('No alerts were returned for this view.')
     expect(mock).toHaveBeenCalledTimes(1)
 
     await userEvent.setup().click(screen.getByRole('button', { name: /refresh dashboard data/i }))
@@ -118,8 +122,8 @@ describe('AlertsPage', () => {
   it('handles a 401 from GET /alerts gracefully without crashing', async () => {
     vi.spyOn(alertsService, 'listAlerts').mockRejectedValue(new ApiError(401, { detail: 'Could not validate credentials.' }, 'Could not validate credentials.'))
     renderWithProviders(<AlertsPage />, { route: '/alerts' })
-    expect(await screen.findByText(/unable to retrieve alerts/i)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /^alerts$/i })).toBeInTheDocument()
+    expect(await screen.findByText(/alert queue could not be loaded/i)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /^alert queue$/i })).toBeInTheDocument()
   })
 
   it('never renders demo data (values match exactly what the mock returned)', async () => {
