@@ -16,6 +16,7 @@ import { RuleExplorerPage } from '@/pages/RuleExplorerPage'
 import { RuleDetailPage } from '@/pages/RuleDetailPage'
 import { TelemetryHealthPage } from '@/pages/TelemetryHealthPage'
 import { DetectionOperationsPage } from '@/pages/DetectionOperationsPage'
+import { SocMetricsPage } from '@/pages/SocMetricsPage'
 import { AuditsPage } from '@/pages/AuditsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
@@ -53,6 +54,7 @@ export function App() {
                 <Route path="/rules/:ruleId" element={<RuleDetailPage />} />
                 <Route path="/telemetry" element={<TelemetryHealthPage />} />
                 <Route path="/operations" element={<DetectionOperationsPage />} />
+                <Route path="/metrics" element={<SocMetricsPage />} />
                 <Route path="/audits" element={<AuditsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
               </Route>
