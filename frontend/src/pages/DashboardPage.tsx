@@ -1,143 +1,178 @@
 import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AlertOctagon, Activity, FolderSearch, ShieldAlert } from 'lucide-react'
 import { Card, CardHeader } from '@/components/ui/Card'
-import { SkeletonCard, SkeletonRow, Skeleton } from '@/components/ui/Skeleton'
+import { Skeleton, SkeletonRow } from '@/components/ui/Skeleton'
 import { ErrorState } from '@/components/ui/ErrorState'
-import { useAuth } from '@/features/auth/useAuth'
-import { useDashboardOverview } from '@/features/dashboard/useDashboardOverview'
-import { MetricCard } from '@/features/dashboard/components/MetricCard'
+import { useDashboardData } from '@/features/dashboard/useDashboardData'
+import { LiveIndicator } from '@/components/live/LiveIndicator'
+import { RefreshButton } from '@/components/live/RefreshButton'
+import { SecurityStateBar } from '@/features/dashboard/components/SecurityStateBar'
 import { ThreatActivityChart } from '@/features/dashboard/components/ThreatActivityChart'
-import { RecentAlertsPanel } from '@/features/dashboard/components/RecentAlertsPanel'
-import { SeverityDistribution } from '@/features/dashboard/components/SeverityDistribution'
+import { ThreatPulsePanel } from '@/features/dashboard/components/ThreatPulsePanel'
+import { ActiveThreatsPanel } from '@/features/dashboard/components/ActiveThreatsPanel'
+import { LiveEventStreamPanel } from '@/features/dashboard/components/LiveEventStreamPanel'
+import { InvestigationActivityPanel } from '@/features/dashboard/components/InvestigationActivityPanel'
 import { MitreActivityPanel } from '@/features/dashboard/components/MitreActivityPanel'
+import { CopilotPanel } from '@/features/dashboard/components/CopilotPanel'
 import { SystemStatusPanel } from '@/features/dashboard/components/SystemStatusPanel'
-import { formatClockTime } from '@/lib/format'
-
-function greeting(date: Date): string {
-  const hour = date.getHours()
-  if (hour < 12) return 'Good morning'
-  if (hour < 18) return 'Good afternoon'
-  return 'Good evening'
-}
+import { deriveActiveThreats } from '@/features/dashboard/derive/deriveActiveThreats'
+import { deriveEventStream } from '@/features/dashboard/derive/deriveEventStream'
+import { deriveInvestigationActivity } from '@/features/dashboard/derive/deriveInvestigationActivity'
+import { deriveMitreActivity } from '@/features/dashboard/derive/deriveMitreActivity'
+import { deriveThreatActivity } from '@/features/dashboard/derive/deriveThreatActivity'
+import { deriveThreatPulse } from '@/features/dashboard/derive/deriveThreatPulse'
+import { formatCount } from '@/lib/format'
 
 export function DashboardPage() {
-  const { user } = useAuth()
-  const { data, isLoading, isError, refetch } = useDashboardOverview()
   const navigate = useNavigate()
-  const now = useMemo(() => new Date(), [])
-  const analystName = user?.email.split('@')[0] ?? 'Analyst'
+  const {
+    alerts,
+    alertsError,
+    alertsLoading,
+    events,
+    eventsError,
+    eventsLoading,
+    health,
+    healthError,
+    liveState,
+    lastSuccessfulRefreshAt,
+    isRefreshing,
+    refreshAll,
+  } = useDashboardData()
+
+  // All REAL-DATA derivations below operate on the exact same bounded
+  // alerts/events arrays useDashboardData() fetched this cycle -- no
+  // component re-fetches anything itself (brief §4/§28: one events
+  // request, one alerts request per refresh cycle).
+  const activeThreats = useMemo(() => deriveActiveThreats(alerts), [alerts])
+  const eventStream = useMemo(() => deriveEventStream(events), [events])
+  const threatActivity = useMemo(() => deriveThreatActivity(alerts), [alerts])
+  const threatPulse = useMemo(() => deriveThreatPulse(alerts), [alerts])
+  const mitreActivity = useMemo(() => deriveMitreActivity(alerts), [alerts])
+  const investigationActivity = useMemo(() => deriveInvestigationActivity(alerts), [alerts])
+
+  const criticalCount = alerts.filter((a) => a.severity === 'critical').length
 
   return (
-    <div className="mx-auto max-w-[1400px] px-6 py-6">
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+    <div className="mx-auto max-w-[1500px] px-6 py-6">
+      {/* ---- Header ---- */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-fg">
-            {greeting(now)}, <span className="capitalize">{analystName}</span>
-          </h1>
-          <p className="mt-1 text-sm text-fg-subtle">Security Operations Overview</p>
+          <h1 className="text-xl font-semibold text-fg">Security Operations</h1>
+          <p className="mt-0.5 text-sm text-fg-subtle">Live monitoring across your environment</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-fg-subtle">
-          <span className="flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5">
-            <span className="size-1.5 rounded-full bg-success" aria-hidden="true" />
-            Monitoring active
-          </span>
-          <span>Last updated {formatClockTime(now)}</span>
+        <div className="flex items-center gap-3">
+          <LiveIndicator state={liveState} lastSuccessfulRefreshAt={lastSuccessfulRefreshAt} />
+          <RefreshButton onRefresh={refreshAll} isRefreshing={isRefreshing} />
         </div>
       </div>
 
-      {isError && (
-        <Card className="mb-6">
-          <ErrorState onRetry={() => refetch()} />
+      {/* ---- Security instrumentation strip (REAL, scoped counts) ---- */}
+      <SecurityStateBar
+        items={[
+          { label: 'Active Alerts (recent)', value: formatCount(alerts.length), tone: criticalCount > 0 ? 'critical' : 'default' },
+          { label: 'Events (recent)', value: formatCount(events.length) },
+          {
+            label: 'Investigating',
+            value: formatCount(investigationActivity.find((g) => g.stage === 'investigating')?.alerts.length ?? 0),
+          },
+          { label: 'Copilot', value: 'READY', tone: 'success' },
+        ]}
+      />
+
+      {/* ---- Hero: Live Threat Activity ---- */}
+      <Card className="mt-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-4">
+          <div>
+            <h2 className="text-sm font-semibold tracking-wide text-fg">Live Threat Activity</h2>
+            <p className="mt-0.5 text-xs text-fg-subtle">Security activity detected across monitored telemetry, last 24 hours</p>
+          </div>
+          <ThreatPulsePanel state={threatPulse} />
+        </div>
+        <div className="px-3 pb-4 pt-2">
+          {alertsLoading && alerts.length === 0 ? (
+            <Skeleton className="h-64 w-full" />
+          ) : alertsError && alerts.length === 0 ? (
+            <ErrorState title="Unable to load threat activity" onRetry={refreshAll} />
+          ) : (
+            <ThreatActivityChart data={threatActivity} />
+          )}
+        </div>
+      </Card>
+
+      {/* ---- Active Threats + Live Event Stream ---- */}
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Card className="overflow-hidden">
+          <CardHeader title="Active Threats" subtitle="Most recent detections across your environment" />
+          {alertsLoading && alerts.length === 0 ? (
+            <div className="divide-y divide-border-faint">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <SkeletonRow key={i} />
+              ))}
+            </div>
+          ) : alertsError && alerts.length === 0 ? (
+            <ErrorState title="Unable to retrieve alerts" onRetry={refreshAll} />
+          ) : (
+            <ActiveThreatsPanel threats={activeThreats} onSelect={(id) => navigate(`/alerts/${id}`)} />
+          )}
         </Card>
-      )}
 
-      {!isError && (
-        <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {isLoading || !data ? (
-              Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
-            ) : (
-              <>
-                <MetricCard label="Total Alerts" value={data.metrics.totalAlerts} icon={ShieldAlert} tone="accent" supporting="Last 30 days" />
-                <MetricCard
-                  label="Critical Alerts"
-                  value={data.metrics.criticalAlerts}
-                  icon={AlertOctagon}
-                  tone="critical"
-                  supporting="Requires attention"
-                />
-                <MetricCard
-                  label="Open Investigations"
-                  value={data.metrics.openInvestigations}
-                  icon={FolderSearch}
-                  supporting="In progress"
-                />
-                <MetricCard label="Events Today" value={data.metrics.eventsToday} icon={Activity} supporting="Ingested telemetry" />
-              </>
-            )}
-          </div>
-
-          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <div className="flex flex-col gap-4 xl:col-span-2">
-              <Card>
-                <CardHeader title="Threat Activity" subtitle="Alerts by severity, last 24 hours" />
-                <div className="px-3 pb-4">
-                  {isLoading || !data ? <Skeleton className="h-64 w-full" /> : <ThreatActivityChart data={data.activity} />}
-                </div>
-              </Card>
-
-              <Card className="overflow-hidden">
-                <CardHeader title="Recent Alerts" subtitle="Most recent detections across your environment" />
-                {isLoading || !data ? (
-                  <div className="divide-y divide-border-faint">
-                    {Array.from({ length: 4 }).map((_, i) => (
-                      <SkeletonRow key={i} />
-                    ))}
-                  </div>
-                ) : (
-                  <RecentAlertsPanel alerts={data.recentAlerts} onSelect={(id) => navigate(`/alerts?focus=${id}`)} />
-                )}
-              </Card>
+        <Card className="overflow-hidden">
+          <CardHeader title="Live Event Stream" subtitle="Newest ingested telemetry" />
+          {eventsLoading && events.length === 0 ? (
+            <div className="divide-y divide-border-faint">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <SkeletonRow key={i} />
+              ))}
             </div>
-
-            <div className="flex flex-col gap-4">
-              <Card>
-                <CardHeader title="Severity Distribution" subtitle="Open + recent alerts" />
-                <div className="px-5 pb-5">
-                  {isLoading || !data ? (
-                    <div className="flex flex-col gap-3">
-                      {Array.from({ length: 4 }).map((_, i) => (
-                        <Skeleton key={i} className="h-4 w-full" />
-                      ))}
-                    </div>
-                  ) : (
-                    <SeverityDistribution data={data.severityDistribution} />
-                  )}
-                </div>
-              </Card>
-
-              <Card className="overflow-hidden">
-                <CardHeader title="MITRE ATT&CK Activity" subtitle="Techniques observed via detections" />
-                {isLoading || !data ? (
-                  <div className="divide-y divide-border-faint">
-                    {Array.from({ length: 3 }).map((_, i) => (
-                      <SkeletonRow key={i} />
-                    ))}
-                  </div>
-                ) : (
-                  <MitreActivityPanel entries={data.mitreActivity} />
-                )}
-              </Card>
-
-              <Card>
-                <CardHeader title="System Status" />
-                <SystemStatusPanel />
-              </Card>
+          ) : eventsError && events.length === 0 ? (
+            <ErrorState title="Unable to retrieve telemetry" onRetry={refreshAll} />
+          ) : (
+            <div className="max-h-96 overflow-y-auto">
+              <LiveEventStreamPanel events={eventStream} onSelect={(id) => navigate(`/events/${id}`)} />
             </div>
-          </div>
-        </>
-      )}
+          )}
+        </Card>
+      </div>
+
+      {/* ---- Investigation Activity + MITRE Activity ---- */}
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Card className="overflow-hidden">
+          <CardHeader title="Investigation Activity" subtitle="Alert lifecycle across the recent queue" />
+          {alertsLoading && alerts.length === 0 ? (
+            <Skeleton className="mx-5 mb-4 h-20 w-auto" />
+          ) : (
+            <InvestigationActivityPanel groups={investigationActivity} />
+          )}
+        </Card>
+
+        <Card className="overflow-hidden">
+          <CardHeader title="MITRE ATT&CK Activity" subtitle="Techniques observed, based on recent alerts" />
+          {alertsLoading && alerts.length === 0 ? (
+            <div className="divide-y divide-border-faint">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <SkeletonRow key={i} />
+              ))}
+            </div>
+          ) : mitreActivity.length === 0 ? (
+            <p className="px-5 pb-5 text-xs text-fg-subtle">No MITRE-mapped techniques observed in the current alert queue.</p>
+          ) : (
+            <MitreActivityPanel entries={mitreActivity} />
+          )}
+        </Card>
+      </div>
+
+      {/* ---- AI Copilot + System Health ---- */}
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <Card>
+          <CopilotPanel selectedAlertId={activeThreats[0]?.id ?? null} />
+        </Card>
+
+        <Card>
+          <CardHeader title="System Health" />
+          <SystemStatusPanel health={health} isLoading={!health && !healthError} isError={healthError} />
+        </Card>
+      </div>
     </div>
   )
 }

@@ -41,7 +41,10 @@ describe('App', () => {
     setTokens({ accessToken: 'fake-access', refreshToken: 'fake-refresh' })
     goTo('/login')
     render(<App />)
-    // Dashboard renders the "Security Operations Overview" subtitle.
-    expect(await screen.findByText(/security operations overview/i)).toBeInTheDocument()
+    // Dashboard renders its static "Security Operations" heading
+    // regardless of data state -- proves routing reached the
+    // dashboard, independent of whether GET /alerts/GET /events
+    // succeed in this network-less test environment.
+    expect(await screen.findByRole('heading', { name: /^security operations$/i })).toBeInTheDocument()
   })
 })

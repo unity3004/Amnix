@@ -14,16 +14,17 @@ export function Topbar({ onOpenCommandPalette }: { onOpenCommandPalette: () => v
       <button
         type="button"
         onClick={onOpenCommandPalette}
-        className="flex h-9 w-full max-w-sm items-center gap-2 rounded-md border border-border bg-surface px-3 text-sm text-fg-subtle transition-colors duration-fast hover:border-border-strong hover:text-fg-muted"
+        aria-label="Search or jump to…"
+        className="flex h-9 w-9 shrink-0 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 text-sm text-fg-subtle transition-colors duration-fast hover:border-border-strong hover:text-fg-muted sm:w-full sm:max-w-sm sm:justify-start"
       >
         <Search className="size-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
-        <span className="flex-1 text-left">Search or jump to…</span>
-        <kbd className="rounded-sm border border-border-strong bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium text-fg-subtle">
+        <span className="hidden flex-1 text-left sm:inline">Search or jump to…</span>
+        <kbd className="hidden rounded-sm border border-border-strong bg-surface-elevated px-1.5 py-0.5 text-[10px] font-medium text-fg-subtle sm:inline">
           {isMac ? '⌘K' : 'Ctrl K'}
         </kbd>
       </button>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         <button
           type="button"
           className="relative flex size-9 items-center justify-center rounded-md text-fg-muted transition-colors duration-fast hover:bg-surface-hover hover:text-fg"

@@ -23,49 +23,65 @@
  */
 
 @theme {
-  /* ---- Surfaces (darkest to lightest) ---- */
-  --color-bg: #090c11;
-  --color-bg-inset: #06080c;
-  --color-surface: #10141b;
-  --color-surface-elevated: #161b24;
-  --color-surface-hover: #1a212c;
+  /* ---- Surfaces (darkest to lightest) ----
+     Step 12C: updated to the exact AMNIX/KANZ palette values specified
+     in the Live SOC Command Center brief (bg/surface/elevated/border/
+     cyan/blue/success/warning/danger/text/muted) -- previously these
+     were original-but-only-compatible approximations (see this file's
+     own Step 12A note below); the brief now supplies exact hex values
+     twice in a row, so this replaces the approximation with the exact
+     requested palette. Values with no direct brief equivalent (bg-inset,
+     surface-hover, border-strong/faint, the *-dim pairs, fg-subtle) are
+     proportionally derived from the ones that were specified. */
+  --color-bg: #05080d;
+  --color-bg-inset: #03050a;
+  --color-surface: #0b1118;
+  --color-surface-elevated: #111a24;
+  --color-surface-hover: #16212d;
 
   /* ---- Borders ---- */
-  --color-border: #212836;
-  --color-border-strong: #2c3648;
-  --color-border-faint: #171d28;
+  --color-border: #1e2936;
+  --color-border-strong: #2a3b4d;
+  --color-border-faint: #141c26;
 
   /* ---- Brand / accent ---- */
-  --color-accent: #2dd4e0;
-  --color-accent-strong: #5ee8f0;
-  --color-accent-dim: #123840;
-  --color-secondary: #6d8ffb;
-  --color-secondary-dim: #1c2647;
+  --color-accent: #22d3ee;
+  --color-accent-strong: #67e8f9;
+  --color-accent-dim: #0f2e36;
+  --color-secondary: #0ea5e9;
+  --color-secondary-dim: #0c2536;
 
   /* ---- Text (named "fg" not "text" so Tailwind utilities read
      text-fg / text-fg-muted rather than the stuttering text-text-*) ---- */
-  --color-fg: #e7edf6;
-  --color-fg-muted: #97a3b8;
-  --color-fg-subtle: #5c6779;
+  --color-fg: #f8fafc;
+  --color-fg-muted: #94a3b8;
+  --color-fg-subtle: #64748b;
   --color-fg-inverse: #05070a;
 
   /* ---- Semantic status ---- */
-  --color-success: #35d399;
+  --color-success: #34d399;
   --color-success-dim: #0f2e26;
-  --color-warning: #f0b93c;
-  --color-warning-dim: #362808;
-  --color-danger: #f2495c;
-  --color-danger-dim: #3a1420;
+  --color-warning: #fbbf24;
+  --color-warning-dim: #3a2a08;
+  --color-danger: #fb7185;
+  --color-danger-dim: #3a1620;
 
-  /* ---- Severity scale (distinct from accent so it never gets lost) ---- */
-  --color-critical: #f23557;
-  --color-critical-dim: #341019;
-  --color-high: #f2823c;
-  --color-high-dim: #33200c;
-  --color-medium: #efc23c;
-  --color-medium-dim: #33280c;
-  --color-low: #6d90c4;
-  --color-low-dim: #182234;
+  /* ---- Severity scale (distinct from accent so it never gets lost).
+     critical/medium reuse danger/warning directly (the brief's own
+     "use red/orange only when severity warrants it" instruction);
+     high is a vivid orange interpolated between warning and danger;
+     low reuses the blue secondary since it is informational, not
+     alarming -- see this file's own reasoning for why cyan/blue is
+     reserved for "intelligence, interaction, and active system state"
+     while red/orange is reserved for genuine severity. ---- */
+  --color-critical: #fb7185;
+  --color-critical-dim: #3a1620;
+  --color-high: #fb923c;
+  --color-high-dim: #3a2210;
+  --color-medium: #fbbf24;
+  --color-medium-dim: #3a2a08;
+  --color-low: #0ea5e9;
+  --color-low-dim: #0c2536;
 
   /* ---- Typography ---- */
   --font-sans:

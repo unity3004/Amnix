@@ -20,6 +20,22 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  // Responsive: auto-collapse the sidebar to icon-only below the `lg`
+  // breakpoint (1024px) so tablet/mobile widths reclaim ~170px of
+  // content space instead of the full 240px sidebar -- the manual
+  // collapse toggle still works on top of this; crossing the
+  // breakpoint again just re-applies the sensible default for that
+  // width, the same behavior most responsive shells use.
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 1023px)')
+    function apply(e: MediaQueryList | MediaQueryListEvent) {
+      setCollapsed(e.matches)
+    }
+    apply(query)
+    query.addEventListener('change', apply)
+    return () => query.removeEventListener('change', apply)
+  }, [])
+
   return (
     <div className="flex h-screen w-full overflow-hidden bg-bg">
       <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />

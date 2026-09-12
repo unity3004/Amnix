@@ -40,7 +40,7 @@ describe('login flow', () => {
     await user.type(screen.getByLabelText(/^password$/i), 'correct horse battery staple')
     await user.click(screen.getByRole('button', { name: /sign in/i }))
 
-    expect(await screen.findByText(/security operations overview/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /^security operations$/i })).toBeInTheDocument()
     expect(authService.login).toHaveBeenCalledWith({
       email: 'analyst@example.com',
       password: 'correct horse battery staple',
@@ -81,7 +81,7 @@ describe('login flow', () => {
     goTo('/dashboard')
     render(<App />)
 
-    expect(await screen.findByText(/security operations overview/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /^security operations$/i })).toBeInTheDocument()
 
     const user = userEvent.setup()
     // Open the user menu (avatar button in the topbar) then log out.
