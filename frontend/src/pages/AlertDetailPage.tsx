@@ -6,8 +6,9 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { Button } from '@/components/ui/Button'
 import { useAlertDetail } from '@/features/alerts/useAlertDetail'
-import { AlertStatusControl } from '@/features/alerts/components/AlertStatusControl'
 import { EvidenceDetailList } from '@/features/alerts/components/EvidenceDetailList'
+import { TriageReadiness } from '@/features/alerts/components/TriageReadiness'
+import { AnalystDecisionPanel } from '@/features/alerts/components/AnalystDecisionPanel'
 import { getMitreTechniquesForRule } from '@/features/dashboard/mitreRegistry'
 import { explainAlertPriority } from '@/features/alerts/priority'
 import { getRuleDefinition } from '@/features/rules/ruleRegistry'
@@ -20,15 +21,18 @@ const STATUS_TONE: Record<string, 'accent' | 'neutral' | 'success' | 'warning'> 
   escalated: 'accent',
 }
 
-/** Step 12K: "Why did this alert fire?" -- an explicit, sequential
- * explanation built entirely from the one GET /alerts/{id} response
- * this page already fetches (zero additional requests):
+/** Step 12K/12L: the SOC analyst triage workflow for a single alert --
+ * built entirely from the one GET /alerts/{id} response this page
+ * already fetches (zero additional requests):
  *
- *   Rule that fired
+ *   Triage header (identity/severity/status/priority)
+ *     -> Triage Readiness (is the data needed for triage available?)
+ *     -> Rule that fired
  *     -> Condition detected (rule logic + this alert's own evidence)
  *     -> Supporting events
  *     -> MITRE technique(s)
- *     -> Investigation evidence (CTA into the existing workspace)
+ *     -> Investigate / Copilot (explicit analyst navigation only)
+ *     -> Analyst Decision (the real PATCH /alerts/{id}/status action)
  *
  * "Detection Rule Logic" (the rule's static, application-controlled
  * description/logic from ruleRegistry.ts) and "Observed Detection
@@ -36,7 +40,8 @@ const STATUS_TONE: Record<string, 'accent' | 'neutral' | 'success' | 'warning'> 
  * separate, separately-labeled blocks -- the former describes what the
  * rule generally does, the latter describes what was actually recorded
  * for THIS alert. Neither is presented as the frontend having
- * independently evaluated or verified anything.
+ * independently evaluated or verified anything, and no step here
+ * fabricates a risk score, confidence percentage, or automated verdict.
  */
 export function AlertDetailPage() {
   const { alertId } = useParams<{ alertId: string }>()
@@ -83,7 +88,7 @@ export function AlertDetailPage() {
               <Badge tone={STATUS_TONE[alert.status]}>{alert.status}</Badge>
             </div>
 
-            <dl className="mt-6 grid grid-cols-2 gap-4 border-t border-border pt-4 sm:grid-cols-4">
+            <dl className="mt-6 grid grid-cols-2 gap-4 border-t border-border pt-4 sm:grid-cols-3 lg:grid-cols-5">
               <div>
                 <dt className="text-[11px] uppercase tracking-wide text-fg-subtle">Confidence</dt>
                 <dd className="mt-0.5 text-sm capitalize text-fg">{alert.confidence}</dd>
@@ -100,14 +105,19 @@ export function AlertDetailPage() {
                 <dt className="text-[11px] uppercase tracking-wide text-fg-subtle">Events</dt>
                 <dd className="mt-0.5 text-sm text-fg">{alert.source_event_ids.length}</dd>
               </div>
+              <div className="min-w-0">
+                <dt className="text-[11px] uppercase tracking-wide text-fg-subtle">Alert ID</dt>
+                <dd className="mt-0.5 break-all font-mono text-xs text-fg-muted">{alert.id}</dd>
+              </div>
             </dl>
 
             <p className="mt-4 text-sm text-fg-muted">{alert.description}</p>
+          </Card>
 
-            <div className="mt-4 border-t border-border pt-4">
-              <p className="mb-2 text-[11px] uppercase tracking-wide text-fg-subtle">Change Status</p>
-              <AlertStatusControl alert={alert} />
-            </div>
+          {/* ---- Triage Readiness: is the data needed for triage
+           * available? (Step 12L) -- never a risk/threat assessment. ---- */}
+          <Card className="mt-4 overflow-hidden">
+            <TriageReadiness alert={alert} rule={rule} mitreTechniques={mitreTechniques} />
           </Card>
 
           {/* ---- Step 1: Rule that fired ---- */}
@@ -206,6 +216,12 @@ export function AlertDetailPage() {
               Open with Copilot
             </Button>
           </div>
+
+          {/* ---- Analyst Decision: the real status-changing action
+           * (Step 12L) -- distinct from every read-only section above. ---- */}
+          <Card className="mt-4 overflow-hidden">
+            <AnalystDecisionPanel alert={alert} />
+          </Card>
         </>
       )}
     </div>

@@ -161,10 +161,12 @@ describe('Step 12K: AlertDetailPage "why did this alert fire?" narrative', () =>
     expect(screen.getByText('x')).toBeInTheDocument()
   })
 
-  it('preserves existing alert status controls and loading/error states', async () => {
-    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
+  it('preserves an alert status control and loading/error states (Step 12L: now the Analyst Decision panel)', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert({ status: 'new' }))
     renderAlertDetail()
 
-    expect(await screen.findByLabelText('Change alert status')).toBeInTheDocument()
+    expect(await screen.findByText('Analyst Decision')).toBeInTheDocument()
+    expect(screen.getByText('Current Status')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Acknowledge' })).toBeInTheDocument()
   })
 })
