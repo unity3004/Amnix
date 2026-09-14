@@ -1,52 +1,9 @@
-import {
-  FilePlus,
-  Pencil,
-  AlignLeft,
-  ArrowRightLeft,
-  Flag,
-  UserCog,
-  Link2,
-  Unlink,
-  Lock,
-  LockOpen,
-  type LucideIcon,
-} from 'lucide-react'
 import { CardHeader } from '@/components/ui/Card'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { formatRelativeTime } from '@/lib/format'
 import { useCaseAudit } from '../useCaseAudit'
-
-const ACTION_LABEL: Record<string, string> = {
-  CASE_CREATED: 'Case created',
-  CASE_TITLE_CHANGED: 'Title changed',
-  CASE_DESCRIPTION_CHANGED: 'Description changed',
-  CASE_STATUS_CHANGED: 'Status changed',
-  CASE_PRIORITY_CHANGED: 'Priority changed',
-  CASE_OWNER_CHANGED: 'Owner changed',
-  CASE_ALERT_LINKED: 'Alert linked',
-  CASE_ALERT_UNLINKED: 'Alert unlinked',
-  CASE_CLOSED: 'Case closed',
-  CASE_REOPENED: 'Case reopened',
-}
-
-/** Each real audit action gets its own icon SHAPE (not just a color) so
- * state-changing events (closed/reopened/status/owner) stay
- * distinguishable for a colorblind analyst or in a printed/greyscale
- * view -- exactly the ten actions CaseAuditAction actually defines
- * server-side, nothing invented. */
-const ACTION_ICON: Record<string, LucideIcon> = {
-  CASE_CREATED: FilePlus,
-  CASE_TITLE_CHANGED: Pencil,
-  CASE_DESCRIPTION_CHANGED: AlignLeft,
-  CASE_STATUS_CHANGED: ArrowRightLeft,
-  CASE_PRIORITY_CHANGED: Flag,
-  CASE_OWNER_CHANGED: UserCog,
-  CASE_ALERT_LINKED: Link2,
-  CASE_ALERT_UNLINKED: Unlink,
-  CASE_CLOSED: Lock,
-  CASE_REOPENED: LockOpen,
-}
+import { CASE_AUDIT_ACTION_ICON as ACTION_ICON, CASE_AUDIT_ACTION_LABEL as ACTION_LABEL } from '../caseAuditPresentation'
 
 /** GET /cases/{id}/audit (Step 12R/12S) -- who did what, and when, over
  * this case's lifetime. Rendered exactly as returned (newest-first, the

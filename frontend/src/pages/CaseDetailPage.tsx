@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Pencil } from 'lucide-react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ArrowLeft, LayoutGrid, Pencil } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -90,6 +90,12 @@ export function CaseDetailPage() {
                 <h1 className="mt-1 text-lg font-semibold text-fg">{caseItem.title}</h1>
               </div>
               <div className="flex items-center gap-2">
+                <Link to={`/cases/${caseItem.id}/console`}>
+                  <Button type="button" variant="secondary" size="sm">
+                    <LayoutGrid className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
+                    Incident Console
+                  </Button>
+                </Link>
                 <Badge tone={STATUS_TONE[caseItem.status]}>{caseItem.status}</Badge>
                 <Badge tone={caseItem.priority}>{caseItem.priority} priority</Badge>
                 {caseItem.severity && <Badge tone={caseItem.severity} dot>{caseItem.severity}</Badge>}

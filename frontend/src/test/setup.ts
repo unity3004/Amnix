@@ -29,3 +29,16 @@ class ResizeObserverStub {
 }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ;(globalThis as any).ResizeObserver = (globalThis as any).ResizeObserver ?? ResizeObserverStub
+
+// jsdom does not implement IntersectionObserver -- the Step 12W Incident
+// Console's scroll-spy nav rail (IncidentNavRail) needs it.
+class IntersectionObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords(): IntersectionObserverEntry[] {
+    return []
+  }
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+;(globalThis as any).IntersectionObserver = (globalThis as any).IntersectionObserver ?? IntersectionObserverStub
