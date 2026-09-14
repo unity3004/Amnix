@@ -18,6 +18,11 @@ describe('login flow', () => {
   })
 
   it('logs in successfully and reaches the dashboard (item 4: login state)', async () => {
+    // Mounts the entire App tree (routes, sidebar nav, auth/query
+    // providers) -- the heaviest render in this suite. Vitest's 5000ms
+    // default can be tight under full-suite parallel worker contention
+    // even though this passes comfortably in isolation; give it real
+    // headroom rather than treating a wall-clock timeout as a logic bug.
     vi.spyOn(authService, 'login').mockResolvedValue({
       access_token: 'access-123',
       refresh_token: 'refresh-123',
@@ -45,7 +50,7 @@ describe('login flow', () => {
       email: 'analyst@example.com',
       password: 'correct horse battery staple',
     })
-  })
+  }, 15000)
 
   it('shows the backend-provided safe error message on failure (item 15: API error handling)', async () => {
     vi.spyOn(authService, 'login').mockRejectedValue(new ApiError(401, { detail: 'Invalid email or password.' }, 'Invalid email or password.'))

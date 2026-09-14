@@ -51,6 +51,7 @@ from app.api.admin import router as admin_router
 from app.api.alerts import router as alerts_router
 from app.api.auth import redact_sensitive_validation_errors
 from app.api.auth import router as auth_router
+from app.api.cases import router as cases_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.core.config import get_settings
@@ -83,6 +84,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(events_router)
 app.include_router(alerts_router)
+app.include_router(cases_router)
 app.include_router(admin_router)
 
 # Step 11K: redacts the raw submitted value from any validation error on
@@ -122,12 +124,15 @@ app.add_middleware(SecurityHeadersMiddleware)
 # cross-origin AMNIX client actually needs to send (Authorization);
 # Content-Type is already in Starlette's own CORS safelist and does not
 # need to be listed again. allow_methods matches AMNIX's actual route
-# verbs (GET/POST/PATCH) -- OPTIONS itself is the preflight verb, not
-# something routes need independent permission for.
+# verbs -- GET/POST/PATCH plus DELETE (Step 12R: DELETE /cases/{id}/
+# alerts/{alert_id}, the first DELETE route in AMNIX -- unlinks a
+# case_alerts join row only, never deletes an Alert itself). OPTIONS
+# itself is the preflight verb, not something routes need independent
+# permission for.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins_list,
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Authorization"],
     allow_credentials=False,
 )

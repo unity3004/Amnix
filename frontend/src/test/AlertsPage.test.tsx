@@ -46,6 +46,18 @@ describe('AlertsPage', () => {
     expect(row).toHaveTextContent('investigating')
   })
 
+  it('Step 12V: never requests GET /alerts/{id}/cases for any row on the list -- zero reverse relationship requests', async () => {
+    vi.spyOn(alertsService, 'listAlerts').mockResolvedValue(
+      resp([makeAlert({ id: 'a1', title: 'Alert one' }), makeAlert({ id: 'a2', title: 'Alert two' }), makeAlert({ id: 'a3', title: 'Alert three' })]),
+    )
+    const casesSpy = vi.spyOn(alertsService, 'getAlertCases')
+    renderWithProviders(<AlertsPage />, { route: '/alerts' })
+
+    await screen.findByText('Alert one')
+    await screen.findByText('Alert three')
+    expect(casesSpy).not.toHaveBeenCalled()
+  })
+
   it('shows the loading skeleton before data resolves', () => {
     vi.spyOn(alertsService, 'listAlerts').mockReturnValue(new Promise(() => {}))
     const { container } = renderWithProviders(<AlertsPage />, { route: '/alerts' })

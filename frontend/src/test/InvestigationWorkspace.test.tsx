@@ -104,6 +104,7 @@ function renderWorkspace(route = '/alerts/alert-ws-1/investigation') {
     <Routes>
       <Route path="/alerts/:alertId/investigation" element={<InvestigationWorkspacePage />} />
       <Route path="/alerts" element={<div>ALERTS LIST MARKER</div>} />
+      <Route path="/cases/:caseId" element={<div>CASE DETAIL MARKER</div>} />
     </Routes>,
     { route },
   )
@@ -117,6 +118,26 @@ describe('InvestigationWorkspacePage', () => {
 
     expect(await screen.findByText('Brute force authentication detected for jdoe')).toBeInTheDocument()
     expect(screen.getByText('alert-ws-1')).toBeInTheDocument()
+  })
+
+  it('shows "Back to Alerts" by default, with no case context in the URL', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
+    vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(makeInvestigation())
+    renderWorkspace()
+
+    expect(await screen.findByRole('button', { name: /back to alerts/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /back to case/i })).not.toBeInTheDocument()
+  })
+
+  it('Step 12U: shows "Back to Case #N" and navigates to the real Case when opened via a Case\'s case-context query params', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
+    vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(makeInvestigation())
+    renderWorkspace('/alerts/alert-ws-1/investigation?case=case-abc&caseNumber=7')
+
+    const backButton = await screen.findByRole('button', { name: 'Back to Case #7' })
+    expect(screen.queryByRole('button', { name: /back to alerts/i })).not.toBeInTheDocument()
+    await userEvent.setup().click(backButton)
+    expect(await screen.findByText('CASE DETAIL MARKER')).toBeInTheDocument()
   })
 
   it('fetches GET /alerts/{id}/investigation successfully and renders the real summary/entities', async () => {

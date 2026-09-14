@@ -18,6 +18,8 @@ import { TelemetryHealthPage } from '@/pages/TelemetryHealthPage'
 import { DetectionOperationsPage } from '@/pages/DetectionOperationsPage'
 import { SocMetricsPage } from '@/pages/SocMetricsPage'
 import { DetectionHealthPage } from '@/pages/DetectionHealthPage'
+import { CasesPage } from '@/pages/CasesPage'
+import { CaseDetailPage } from '@/pages/CaseDetailPage'
 import { AuditsPage } from '@/pages/AuditsPage'
 import { SettingsPage } from '@/pages/SettingsPage'
 import { NotFoundPage } from '@/pages/NotFoundPage'
@@ -57,6 +59,8 @@ export function App() {
                 <Route path="/operations" element={<DetectionOperationsPage />} />
                 <Route path="/metrics" element={<SocMetricsPage />} />
                 <Route path="/detection-health" element={<DetectionHealthPage />} />
+                <Route path="/cases" element={<CasesPage />} />
+                <Route path="/cases/:caseId" element={<CaseDetailPage />} />
                 <Route path="/audits" element={<AuditsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
               </Route>

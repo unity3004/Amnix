@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { Card } from '@/components/ui/Card'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -7,6 +7,7 @@ import { useAlertDetail } from '@/features/alerts/useAlertDetail'
 import { AlertStatusControl } from '@/features/alerts/components/AlertStatusControl'
 import { useInvestigation } from '@/features/investigation/useInvestigation'
 import { useCopilotConversation } from '@/features/investigation/useCopilotConversation'
+import { readCaseContext } from '@/features/cases/caseNavigationContext'
 import { InvestigationHeader } from '@/features/investigation/components/InvestigationHeader'
 import { AlertSummaryPanel } from '@/features/investigation/components/AlertSummaryPanel'
 import { EvidencePanel } from '@/features/investigation/components/EvidencePanel'
@@ -35,6 +36,8 @@ import type { CopilotMitreAnalysisEntry } from '@/types/api'
  */
 export function InvestigationWorkspacePage() {
   const { alertId } = useParams<{ alertId: string }>()
+  const [searchParams] = useSearchParams()
+  const caseContext = readCaseContext(searchParams)
 
   const alertQuery = useAlertDetail(alertId)
   const investigationQuery = useInvestigation(alertId)
@@ -78,7 +81,7 @@ export function InvestigationWorkspacePage() {
 
   return (
     <div className="mx-auto max-w-[1600px] px-6 py-6">
-      <InvestigationHeader alert={alert} />
+      <InvestigationHeader alert={alert} caseContext={caseContext} />
 
       <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-[1fr_420px]">
         {/* ---- Main analyst column ---- */}

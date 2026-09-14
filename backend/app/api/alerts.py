@@ -7,6 +7,15 @@ accessible. Authentication happens before any business logic runs;
 nothing about alert creation, investigation, Copilot, or Copilot audit
 behavior itself changes. No RBAC yet: any authenticated user (analyst or
 admin) may call every route here equally — see Step 11F.
+
+Step 12V: GET /{alert_id}/cases is the one route in this file that
+depends on the Case domain (app.api.cases.get_case_service/
+case_to_case_read, app.services.case_service.CaseService) -- the
+authoritative Alert -> Case reverse relationship query. This does not
+make Alert itself "Case-aware": app.models.alert.py and
+app.repositories.alert.py remain completely untouched by this step; the
+dependency is a router-level, read-only composition of the existing
+Case domain, not a new field/column/relationship on Alert.
 """
 
 import logging
@@ -20,6 +29,7 @@ from app.ai.context_builder import AIContextBuilder
 from app.ai.exceptions import AIProviderError
 from app.ai.factory import get_ai_provider
 from app.ai.provider import AIProvider
+from app.api.cases import case_to_case_read, get_case_service
 from app.api.dependencies import AuthenticatedUser, get_current_user
 from app.core.database import get_db
 from app.repositories.alert import (
@@ -29,14 +39,18 @@ from app.repositories.alert import (
     MAX_LIST_LIMIT as ALERT_MAX_LIST_LIMIT,
 )
 from app.repositories.alert import AlertRepository
+from app.repositories.case import DEFAULT_LIST_LIMIT as CASE_DEFAULT_LIST_LIMIT
+from app.repositories.case import MAX_LIST_LIMIT as CASE_MAX_LIST_LIMIT
 from app.repositories.copilot_audit import DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, CopilotAuditRepository
 from app.schemas.ai import CopilotFollowUpRequest, CopilotFollowUpResponse, CopilotQuestionRequest, CopilotResponse
 from app.schemas.alert import AlertCreate, AlertListResponse, AlertRead, AlertStatus, AlertStatusUpdate
+from app.schemas.case import CaseListResponse
 from app.schemas.copilot_audit import CopilotAuditListResponse, CopilotAuditResponse
 from app.schemas.detection import DetectionSeverity
 from app.schemas.investigation import InvestigationContext
 from app.services.alert_lifecycle import InvalidAlertStatusTransition
 from app.services.alert_service import AlertNotFoundError, AlertService, UnknownSourceEventsError
+from app.services.case_service import CaseService
 from app.services.copilot_audit_service import (
     CopilotAuditAlertNotFoundError,
     CopilotAuditPersistenceError,
@@ -171,6 +185,50 @@ def get_alert_investigation(
     if alert is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
     return InvestigationEngine().build_context(alert)
+
+
+@router.get("/{alert_id}/cases", response_model=CaseListResponse)
+def list_alert_cases(
+    alert_id: uuid.UUID,
+    limit: int = Query(default=CASE_DEFAULT_LIST_LIMIT, ge=1, le=CASE_MAX_LIST_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    case_service: CaseService = Depends(get_case_service),
+) -> CaseListResponse:
+    """Step 12V: the authoritative reverse relationship Step 12U's
+    discovery found missing -- which real, persisted Cases (if any)
+    currently cite this Alert, via the exact same case_alerts join
+    GET /cases/{id}/alerts already uses in the other direction. There is
+    deliberately no `GET /cases?alert_id=...` anywhere in this codebase:
+    that query parameter would not exist on CaseRepository.list()'s own
+    signature, so FastAPI would silently ignore it and return every
+    Case, unfiltered -- confirmed by live testing during Step 12U's own
+    discovery. This route is the real, index-backed, authoritative
+    replacement for that trap, not an alternate path to it.
+
+    Read-only: never creates a CaseAudit row (or any other audit/
+    mutation) merely because the analyst viewed this relationship, and
+    never touches SecurityEvent/InvestigationContext/MITRE/Copilot --
+    the response is CaseRead's own existing safe field set (reused
+    verbatim via case_to_case_read(), the identical projection GET
+    /cases and GET /cases/{id} already use), never a new schema
+    invented to duplicate it.
+
+    Same shared-SOC authentication as every other route in this file --
+    no ownership/tenant filter, any authenticated analyst or admin sees
+    the same relationship. `limit`/`offset` reuse Case's own bounds
+    (this endpoint returns Cases, not Alerts) and are validated here by
+    FastAPI's own Query bounds, then again independently inside
+    CaseAlertRepository (defense in depth, matching every other bounded-
+    list repository in this codebase).
+    """
+    try:
+        cases = case_service.list_cases_for_alert(alert_id, limit=limit, offset=offset)
+    except AlertNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found") from exc
+
+    items = [case_to_case_read(case, severity=case_service.derive_severity(case.id)) for case in cases]
+    return CaseListResponse(items=items, limit=limit, offset=offset)
 
 
 @router.post("/{alert_id}/copilot", response_model=CopilotResponse)

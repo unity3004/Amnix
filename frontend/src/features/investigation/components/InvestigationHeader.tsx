@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { SeverityBadge, Badge } from '@/components/ui/Badge'
+import type { CaseNavigationContext } from '@/features/cases/caseNavigationContext'
 import type { AlertRead } from '@/types/api'
 
 const STATUS_TONE: Record<AlertRead['status'], 'accent' | 'neutral' | 'success' | 'warning'> = {
@@ -14,18 +15,28 @@ const STATUS_TONE: Record<AlertRead['status'], 'accent' | 'neutral' | 'success' 
 /** REAL BACKEND DATA -- every field below is GET /alerts/{id} verbatim.
  * Section A of the investigation workspace.
  */
-export function InvestigationHeader({ alert }: { alert: AlertRead }) {
+export function InvestigationHeader({
+  alert,
+  caseContext,
+}: {
+  alert: AlertRead
+  /** Step 12U: present only when the analyst arrived via Case ->
+   * Alert -> Investigate (see caseNavigationContext.ts). Purely
+   * navigational -- never implies Investigation itself is Case-scoped
+   * or persisted anywhere against the Case. */
+  caseContext: CaseNavigationContext | null
+}) {
   const navigate = useNavigate()
 
   return (
     <div className="border-b border-border pb-4">
       <button
         type="button"
-        onClick={() => navigate('/alerts')}
+        onClick={() => navigate(caseContext ? `/cases/${caseContext.caseId}` : '/alerts')}
         className="mb-3 flex items-center gap-1.5 text-xs text-fg-subtle transition-colors duration-fast hover:text-fg"
       >
         <ArrowLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
-        Back to Alerts
+        {caseContext ? `Back to Case #${caseContext.caseNumber}` : 'Back to Alerts'}
       </button>
 
       <div className="flex flex-wrap items-start justify-between gap-3">

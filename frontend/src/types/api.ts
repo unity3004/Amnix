@@ -351,6 +351,130 @@ export interface UserStatusUpdate {
 }
 
 // ---------------------------------------------------------------------------
+// Cases (app/schemas/case.py, Step 12R)
+// ---------------------------------------------------------------------------
+
+export type CaseStatus = 'OPEN' | 'INVESTIGATING' | 'RESOLVED' | 'CLOSED'
+export type CasePriority = 'critical' | 'high' | 'medium' | 'low'
+
+export interface CaseCreate {
+  title: string
+  description: string
+  priority?: CasePriority
+}
+
+/** PATCH /cases/{id} -- every field omitted/null means "do not change
+ * this field" (backend never distinguishes omitted from explicit null
+ * for title/description here -- see CaseUpdate's own docstring).
+ */
+export interface CaseUpdate {
+  title?: string | null
+  description?: string | null
+  priority?: CasePriority | null
+}
+
+export interface CaseStatusUpdate {
+  status: CaseStatus
+  closure_reason?: string | null
+}
+
+/** `owner_id: null` releases ownership -- see CaseOwnerUpdate's own
+ * docstring for the self-assign/release/admin-reassign authorization
+ * rules CaseService enforces server-side.
+ */
+export interface CaseOwnerUpdate {
+  owner_id?: string | null
+}
+
+export interface CaseAlertLink {
+  alert_id: string
+}
+
+export interface CaseNoteCreate {
+  body: string
+}
+
+/** `severity` is never a stored column -- CaseService derives it fresh
+ * per request as the max severity among the case's currently-linked
+ * alerts, or null if none are linked. See app/models/case.py.
+ */
+export interface CaseRead {
+  id: string
+  case_number: number
+  title: string
+  description: string
+  status: CaseStatus
+  priority: CasePriority
+  severity: DetectionSeverity | null
+  created_at: string
+  updated_at: string
+  created_by: string
+  owner_id: string | null
+  closed_at: string | null
+  closure_reason: string | null
+}
+
+/** GET /cases -- no `total` field, same reasoning as every other list
+ * endpoint in AMNIX (no COUNT(*) query).
+ */
+export interface CaseListResponse {
+  items: CaseRead[]
+  limit: number
+  offset: number
+}
+
+export interface ListCasesParams {
+  limit?: number
+  offset?: number
+  status?: CaseStatus
+  priority?: CasePriority
+  owner_id?: string
+}
+
+export type CaseAuditAction =
+  | 'CASE_CREATED'
+  | 'CASE_TITLE_CHANGED'
+  | 'CASE_DESCRIPTION_CHANGED'
+  | 'CASE_STATUS_CHANGED'
+  | 'CASE_PRIORITY_CHANGED'
+  | 'CASE_OWNER_CHANGED'
+  | 'CASE_ALERT_LINKED'
+  | 'CASE_ALERT_UNLINKED'
+  | 'CASE_CLOSED'
+  | 'CASE_REOPENED'
+
+export interface CaseAuditResponse {
+  id: string
+  case_id: string
+  actor_user_id: string
+  action: CaseAuditAction
+  related_alert_id: string | null
+  previous_value: string | null
+  new_value: string | null
+  created_at: string
+}
+
+export interface CaseAuditListResponse {
+  items: CaseAuditResponse[]
+  limit: number
+  offset: number
+}
+
+export interface CaseNoteResponse {
+  id: string
+  case_id: string
+  author_id: string
+  body: string
+  created_at: string
+}
+
+export interface CaseNoteListResponse {
+  items: CaseNoteResponse[]
+  limit: number
+  offset: number
+}
+
+// ---------------------------------------------------------------------------
 // Error envelope (FastAPI's default + AMNIX's own HTTPException detail shape)
 // ---------------------------------------------------------------------------
 

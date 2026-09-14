@@ -97,9 +97,36 @@ def _disable_login_rate_limiting():
 
 @pytest.fixture
 def db_session(_pg_engine):
+    """Step 12R discovery: a plain `sessionmaker(bind=connection)` joined
+    to an already-`begin()`'d Connection does NOT keep this fixture's own
+    "everything rolls back" contract for a test that calls
+    `session.commit()` more than once (every repository in this codebase
+    that calls `.commit()` internally -- AlertRepository, UserRepository,
+    CopilotAuditRepository, etc. -- does exactly that whenever a test
+    builds more than one row). Each `session.commit()` was actually
+    ending the real, cross-connection-visible transaction rather than
+    staying nested inside it, so only the LAST pending change before
+    teardown was ever rolled back -- everything committed earlier in the
+    same test permanently persisted into the `_test` database. This was
+    silently accumulating garbage in that database across every prior
+    test invocation this session (confirmed directly: `amnix_test` held
+    163 leftover User rows and 74 leftover AdminAudit rows from
+    unmodified, pre-existing test files at the time this was found),
+    eventually surfacing as failures in unrelated tests that scan a
+    whole table expecting an exact/empty count (test_alert_list_api.py,
+    test_security_event_list_api.py). `join_transaction_mode=
+    "create_savepoint"` is SQLAlchemy 2.0's built-in fix for precisely
+    this scenario: a Session joining an externally-managed transaction
+    now transparently uses a SAVEPOINT for its own commit/rollback
+    calls, so `session.commit()` releases (and immediately reopens) a
+    SAVEPOINT instead of ending the real transaction -- the outer
+    `transaction` this fixture began stays open, and its own
+    `rollback()` below now genuinely undoes everything, no matter how
+    many times a test (or the repositories it calls) committed.
+    """
     connection = _pg_engine.connect()
     transaction = connection.begin()
-    session_local = sessionmaker(bind=connection)
+    session_local = sessionmaker(bind=connection, join_transaction_mode="create_savepoint")
     session = session_local()
 
     yield session

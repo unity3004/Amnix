@@ -3,6 +3,7 @@ import type {
   AlertListResponse,
   AlertRead,
   AlertStatus,
+  CaseListResponse,
   CopilotAuditListResponse,
   CopilotFollowUpRequest,
   CopilotFollowUpResponse,
@@ -33,6 +34,23 @@ export function updateAlertStatus(alertId: string, status: AlertStatus): Promise
 
 export function getAlertInvestigation(alertId: string): Promise<InvestigationContext> {
   return apiRequest<InvestigationContext>(`/alerts/${alertId}/investigation`, { auth: true })
+}
+
+/** GET /alerts/{id}/cases (Step 12V) -- the authoritative reverse
+ * relationship the Step 12U discovery report found missing. Returns
+ * real, persisted Case rows (the exact same CaseRead shape GET /cases
+ * already returns) via the case_alerts join, never a client-side guess
+ * built from Step 12U's own purely-navigational case-context breadcrumb.
+ */
+export function getAlertCases(
+  alertId: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<CaseListResponse> {
+  const query = new URLSearchParams()
+  if (params.limit !== undefined) query.set('limit', String(params.limit))
+  if (params.offset !== undefined) query.set('offset', String(params.offset))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return apiRequest<CaseListResponse>(`/alerts/${alertId}/cases${suffix}`, { auth: true })
 }
 
 export function askCopilot(alertId: string, question: string): Promise<CopilotResponse> {

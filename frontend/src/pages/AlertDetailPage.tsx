@@ -1,4 +1,4 @@
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, FileSearch, Bot } from 'lucide-react'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { SeverityBadge, Badge } from '@/components/ui/Badge'
@@ -9,6 +9,9 @@ import { useAlertDetail } from '@/features/alerts/useAlertDetail'
 import { EvidenceDetailList } from '@/features/alerts/components/EvidenceDetailList'
 import { TriageReadiness } from '@/features/alerts/components/TriageReadiness'
 import { AnalystDecisionPanel } from '@/features/alerts/components/AnalystDecisionPanel'
+import { LinkAlertToCasePanel } from '@/features/cases/components/LinkAlertToCasePanel'
+import { LinkedCasesPanel } from '@/features/cases/components/LinkedCasesPanel'
+import { buildCaseContextQuery, readCaseContext } from '@/features/cases/caseNavigationContext'
 import { getMitreTechniquesForRule } from '@/features/dashboard/mitreRegistry'
 import { explainAlertPriority } from '@/features/alerts/priority'
 import { getRuleDefinition } from '@/features/rules/ruleRegistry'
@@ -46,19 +49,31 @@ const STATUS_TONE: Record<string, 'accent' | 'neutral' | 'success' | 'warning'> 
 export function AlertDetailPage() {
   const { alertId } = useParams<{ alertId: string }>()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const { data: alert, isPending, isError, refetch } = useAlertDetail(alertId)
   const rule = alert ? getRuleDefinition(alert.rule_id) : null
   const mitreTechniques = alert ? getMitreTechniquesForRule(alert.rule_id) : []
+  // Step 12U: a pure client-side breadcrumb, present only when the
+  // analyst actually navigated here from a Case (see
+  // caseNavigationContext.ts's own docstring for why this is a query
+  // param, never a backend field or persisted relationship). Says "you
+  // opened this from Case #N", never "this alert belongs to Case #N" --
+  // the backend has no reverse Alert -> Case lookup to make that claim
+  // (see Step 12U discovery report).
+  const caseContext = readCaseContext(searchParams)
+  const investigationHref = alert
+    ? `/alerts/${alert.id}/investigation${caseContext ? buildCaseContextQuery(caseContext) : ''}`
+    : ''
 
   return (
     <div className="mx-auto max-w-[1000px] px-6 py-6">
       <button
         type="button"
-        onClick={() => navigate('/alerts')}
+        onClick={() => navigate(caseContext ? `/cases/${caseContext.caseId}` : '/alerts')}
         className="mb-4 flex items-center gap-1.5 text-xs text-fg-subtle transition-colors duration-fast hover:text-fg"
       >
         <ArrowLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
-        Back to Alerts
+        {caseContext ? `Back to Case #${caseContext.caseNumber}` : 'Back to Alerts'}
       </button>
 
       {isPending && (
@@ -207,7 +222,7 @@ export function AlertDetailPage() {
           {/* ---- Step 5: Investigation evidence (CTA into the existing
            * Investigation Workspace -- not duplicated here). ---- */}
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Button variant="primary" className="justify-center" onClick={() => navigate(`/alerts/${alert.id}/investigation`)}>
+            <Button variant="primary" className="justify-center" onClick={() => navigate(investigationHref)}>
               <FileSearch className="size-4" strokeWidth={1.75} aria-hidden="true" />
               Investigate Alert
             </Button>
@@ -221,6 +236,22 @@ export function AlertDetailPage() {
            * (Step 12L) -- distinct from every read-only section above. ---- */}
           <Card className="mt-4 overflow-hidden">
             <AnalystDecisionPanel alert={alert} />
+          </Card>
+
+          {/* ---- Linked Cases (Step 12V): the AUTHORITATIVE Alert ->
+           * Case relationship, GET /alerts/{id}/cases -- distinct from
+           * the Step 12U "Back to Case #N" navigation breadcrumb that
+           * may also be showing above (see LinkedCasesPanel's own
+           * docstring for why the two are never conflated). ---- */}
+          <Card className="mt-4 overflow-hidden">
+            <LinkedCasesPanel alertId={alert.id} />
+          </Card>
+
+          {/* ---- Case Management (Step 12S): a real action -- POST
+           * /cases/{id}/alerts against the real, persisted Case domain
+           * built in Step 12R. See LinkAlertToCasePanel's own docstring. ---- */}
+          <Card className="mt-4 p-6">
+            <LinkAlertToCasePanel alertId={alert.id} />
           </Card>
         </>
       )}
