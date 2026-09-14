@@ -91,6 +91,17 @@ class AlertService:
             until=until,
         )
 
+    def list_for_event(self, event_id: uuid.UUID, *, limit: int, offset: int) -> list[Alert]:
+        """Thin passthrough to AlertRepository.list_alerts_for_event() --
+        Step 12Y's GET /events/{event_id}/alerts. Existence of the
+        SecurityEvent itself is checked by the route (via
+        SecurityEventService.get(), the exact same 404 pattern GET
+        /events/{event_id} already uses) -- this method assumes a valid
+        event_id and simply returns whatever Alerts (zero or more) are
+        actually linked to it.
+        """
+        return self._repository.list_alerts_for_event(event_id, limit=limit, offset=offset)
+
     def update_status(self, alert_id: uuid.UUID, new_status: AlertStatus) -> Alert:
         alert = self._repository.get_by_id(alert_id)
         if alert is None:

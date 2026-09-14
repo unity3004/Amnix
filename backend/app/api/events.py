@@ -15,10 +15,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import IPvAnyAddress
 from sqlalchemy.orm import Session
 
+from app.api.alerts import get_alert_service
 from app.api.dependencies import AuthenticatedUser, get_current_user
 from app.core.database import get_db
+from app.repositories.alert import DEFAULT_LIST_LIMIT as ALERT_DEFAULT_LIST_LIMIT
+from app.repositories.alert import MAX_LIST_LIMIT as ALERT_MAX_LIST_LIMIT
 from app.repositories.alert import AlertRepository
 from app.repositories.security_event import DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, SecurityEventRepository
+from app.schemas.alert import AlertListResponse, AlertRead
 from app.schemas.security_event import SecurityEventCreate, SecurityEventListResponse, SecurityEventRead
 from app.services.alert_generation_service import AlertGenerationService
 from app.services.alert_service import AlertService
@@ -144,3 +148,51 @@ def get_event(
     if event is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Security event not found")
     return SecurityEventRead.model_validate(event)
+
+
+@router.get("/{event_id}/alerts", response_model=AlertListResponse)
+def list_event_alerts(
+    event_id: uuid.UUID,
+    limit: int = Query(default=ALERT_DEFAULT_LIST_LIMIT, ge=1, le=ALERT_MAX_LIST_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    service: SecurityEventService = Depends(get_security_event_service),
+    alert_service: AlertService = Depends(get_alert_service),
+) -> AlertListResponse:
+    """Step 12Y: the authoritative reverse relationship -- which real,
+    persisted Alerts (if any) cite this SecurityEvent as evidence, via
+    the exact same alert_security_events join AlertRepository already
+    uses in the forward direction (Alert.security_events /
+    AlertRead.source_event_ids). This is deliberately NOT derived from
+    rule_id, timestamps, event_type, hostname, username, IP address, or
+    any other heuristic matching -- the database join is the sole source
+    of truth, mirroring Step 12V's GET /alerts/{id}/cases (the same
+    "authoritative reverse relationship" pattern, one hop over in the
+    Alert <-> Case join).
+
+    `event_id` is the only resource selector this route accepts -- there
+    is deliberately no `alert_id` query parameter to filter by; a client
+    cannot inject or probe for an arbitrary alert through this endpoint,
+    only ever see the alerts a SecurityEvent is genuinely linked to.
+
+    Same shared-SOC authentication as every other route in this router --
+    no ownership/tenant filter, any authenticated analyst or admin sees
+    the same relationship. `limit`/`offset` reuse Alert's own bounds
+    (this endpoint returns Alerts, not SecurityEvents) and are validated
+    here by FastAPI's own Query bounds, then again independently inside
+    AlertRepository (defense in depth, matching every other bounded-list
+    repository in this codebase).
+
+    Read-only: never creates, updates, or deletes anything -- viewing
+    this relationship has no side effect of any kind.
+    """
+    event = service.get(event_id)
+    if event is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Security event not found")
+
+    alerts = alert_service.list_for_event(event_id, limit=limit, offset=offset)
+    return AlertListResponse(
+        items=[AlertRead.model_validate(alert) for alert in alerts],
+        limit=limit,
+        offset=offset,
+    )

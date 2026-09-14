@@ -5,6 +5,7 @@ import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { useEventDetail } from '@/features/events/useEventDetail'
 import { EventEvidenceFields } from '@/features/events/components/EventEvidenceFields'
+import { LinkedAlertsPanel } from '@/features/events/components/LinkedAlertsPanel'
 
 export function EventDetailPage() {
   const { eventId } = useParams<{ eventId: string }>()
@@ -44,6 +45,14 @@ export function EventDetailPage() {
           <div className="mt-6 border-t border-border pt-4">
             <EventEvidenceFields event={event} />
           </div>
+        </Card>
+      )}
+
+      {/* ---- Linked Alerts (Step 12Y): the AUTHORITATIVE SecurityEvent
+       * -> Alert relationship, GET /events/{id}/alerts. ---- */}
+      {event && (
+        <Card className="mt-4 overflow-hidden">
+          <LinkedAlertsPanel eventId={event.id} />
         </Card>
       )}
     </div>

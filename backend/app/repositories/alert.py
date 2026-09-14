@@ -111,6 +111,52 @@ class AlertRepository:
         stmt = select(SecurityEvent).where(SecurityEvent.id.in_(event_ids))
         return list(self._db.scalars(stmt))
 
+    def list_alerts_for_event(
+        self, event_id: uuid.UUID, *, limit: int = DEFAULT_LIST_LIMIT, offset: int = 0
+    ) -> list[Alert]:
+        """Step 12Y: the authoritative reverse relationship -- which real,
+        persisted Alerts (if any) cite this SecurityEvent as evidence, via
+        the exact same alert_security_events join
+        exists_with_rule_and_exact_events() above already reads, just in
+        the other direction. A single parameterized JOIN filtered by the
+        exact event_id (never Python-side filtering over an unbounded
+        fetch-all), using the existing
+        ix_alert_security_events_security_event_id index -- present on
+        this table since it was first created, with no caller until now,
+        so this is a genuine index-backed reverse lookup from day one,
+        not a new migration (same shape as Step 12V's
+        CaseAlertRepository.list_cases_for_alert() discovery).
+
+        Uses selectinload(Alert.security_events) -- exactly like
+        list_recent()/get_by_id_with_events() -- so serializing each
+        returned Alert's source_event_ids costs one extra batched query
+        total, never one query per alert (no N+1).
+
+        Ordered by the same convention as list_recent() (`first_seen
+        DESC`, `id DESC` tie-break) -- no new sort model introduced for
+        this one reverse-lookup endpoint.
+
+        `limit`/`offset` are validated here (defense in depth), exactly
+        like every other bounded-list repository method in this
+        codebase, in addition to the FastAPI Query bounds enforced at the
+        API layer.
+        """
+        if not (1 <= limit <= MAX_LIST_LIMIT):
+            raise ValueError(f"limit must be between 1 and {MAX_LIST_LIMIT}, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+
+        stmt = (
+            select(Alert)
+            .join(alert_security_events, alert_security_events.c.alert_id == Alert.id)
+            .where(alert_security_events.c.security_event_id == event_id)
+            .options(selectinload(Alert.security_events))
+            .order_by(Alert.first_seen.desc(), Alert.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(self._db.scalars(stmt))
+
     def exists_with_rule_and_exact_events(self, rule_id: str, event_ids: Sequence[uuid.UUID]) -> bool:
         """Step 10H: the automatic-alert-generation dedup check. True if
         an Alert with this exact `rule_id` already references EXACTLY

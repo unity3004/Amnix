@@ -6,9 +6,33 @@ import { ThreatHuntingPage } from '@/pages/ThreatHuntingPage'
 import { renderWithProviders } from './utils'
 import * as eventsService from '@/services/eventsService'
 import { ApiError } from '@/services/httpClient'
-import type { SecurityEventListResponse, SecurityEventRead } from '@/types/api'
+import type { AlertListResponse, AlertRead, SecurityEventListResponse, SecurityEventRead } from '@/types/api'
 
 afterEach(() => vi.restoreAllMocks())
+
+function makeAlert(overrides: Partial<AlertRead> = {}): AlertRead {
+  const now = new Date().toISOString()
+  return {
+    id: `alert-${Math.random().toString(36).slice(2)}`,
+    rule_id: 'brute_force_authentication',
+    title: 'Brute force authentication detected',
+    description: 'd',
+    severity: 'high',
+    confidence: 'high',
+    status: 'new',
+    first_seen: now,
+    last_seen: now,
+    created_at: now,
+    updated_at: now,
+    evidence: {},
+    alert_metadata: null,
+    source_event_ids: [],
+    ...overrides,
+  }
+}
+function alertResp(items: AlertRead[]): AlertListResponse {
+  return { items, limit: 50, offset: 0 }
+}
 
 function makeEvent(overrides: Partial<SecurityEventRead> = {}): SecurityEventRead {
   const now = new Date().toISOString()
@@ -177,6 +201,7 @@ describe('ThreatHuntingPage: Event Inspector (zero additional fetch)', () => {
       resp([makeEvent({ id: 'event-focus', process_name: 'powershell.exe', file_hash: 'a'.repeat(64) })]),
     )
     const getEventSpy = vi.spyOn(eventsService, 'getEvent')
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
     renderHunting()
 
     await screen.findByText('No event selected.')
@@ -189,6 +214,7 @@ describe('ThreatHuntingPage: Event Inspector (zero additional fetch)', () => {
 
   it('"Open Full Event Detail" links to the real, existing event permalink route', async () => {
     vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ id: 'event-999' })]))
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
     renderHunting()
 
     await userEvent.setup().click(await screen.findByText('authentication_failure'))
@@ -205,6 +231,7 @@ describe('ThreatHuntingPage: pivot behavior', () => {
       resp([makeEvent({ id: 'event-pivot', hostname: 'WIN-7A3B', event_type: 'powershell_execution' })]),
     )
     const mock = vi.spyOn(eventsService, 'listEvents')
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
     renderHunting('/threat-hunting?event_type=powershell_execution&window=60')
 
     const user = userEvent.setup()
@@ -220,6 +247,7 @@ describe('ThreatHuntingPage: pivot behavior', () => {
 
   it('never shows a pivot button for a field the backend cannot filter on', async () => {
     vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ process_name: 'powershell.exe' })]))
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
     renderHunting()
 
     await userEvent.setup().click(await screen.findByText('authentication_failure'))
@@ -229,6 +257,7 @@ describe('ThreatHuntingPage: pivot behavior', () => {
 
   it('only shows a pivot button for a field that is actually present on the selected event', async () => {
     vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ destination_ip: null })]))
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
     renderHunting()
 
     await userEvent.setup().click(await screen.findByText('authentication_failure'))
@@ -245,5 +274,57 @@ describe('ThreatHuntingPage: no N+1', () => {
 
     await screen.findByText('Page 1')
     await waitFor(() => expect(mock).toHaveBeenCalledTimes(1))
+  })
+})
+
+describe('Step 12Y: Threat Hunting Linked Alerts integration (GET /events/{id}/alerts)', () => {
+  it('never fetches linked alerts for any row while nothing is selected', async () => {
+    const events = Array.from({ length: 10 }, (_, i) => makeEvent({ id: `evt-${i}` }))
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp(events))
+    const alertsSpy = vi.spyOn(eventsService, 'getEventAlerts')
+    renderHunting()
+
+    await screen.findByText('Page 1')
+    expect(alertsSpy).not.toHaveBeenCalled()
+  })
+
+  it('fetches linked alerts exactly once, for the real selected event, when the inspector is explicitly opened', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ id: 'event-focus' })]))
+    const alertsSpy = vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
+    renderHunting()
+
+    await userEvent.setup().click(await screen.findByText('authentication_failure'))
+
+    await waitFor(() => expect(alertsSpy).toHaveBeenCalledTimes(1))
+    expect(alertsSpy).toHaveBeenCalledWith('event-focus')
+  })
+
+  it('shows an honest empty state when the selected event has no linked alerts', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ id: 'event-empty' })]))
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
+    renderHunting()
+
+    await userEvent.setup().click(await screen.findByText('authentication_failure'))
+    expect(await screen.findByText('No alerts are linked to this event.')).toBeInTheDocument()
+  })
+
+  it('renders real linked alerts once selected, and re-fetches for a newly selected event', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(
+      resp([makeEvent({ id: 'event-a', event_type: 'authentication_failure' }), makeEvent({ id: 'event-b', event_type: 'powershell_execution' })]),
+    )
+    const alertsSpy = vi.spyOn(eventsService, 'getEventAlerts').mockImplementation((eventId) =>
+      Promise.resolve(alertResp(eventId === 'event-a' ? [makeAlert({ title: 'Alert for A' })] : [])),
+    )
+    renderHunting()
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByText('authentication_failure'))
+    expect(await screen.findByText('Alert for A')).toBeInTheDocument()
+
+    await user.click(screen.getByText('powershell_execution'))
+    await screen.findByText('No alerts are linked to this event.')
+
+    expect(alertsSpy).toHaveBeenNthCalledWith(1, 'event-a')
+    expect(alertsSpy).toHaveBeenNthCalledWith(2, 'event-b')
   })
 })

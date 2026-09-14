@@ -4,6 +4,7 @@ import { CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { EventEvidenceFields } from '@/features/events/components/EventEvidenceFields'
+import { LinkedAlertsPanel } from '@/features/events/components/LinkedAlertsPanel'
 import { PIVOT_FIELDS, type HuntFilters } from '../types'
 import type { SecurityEventRead } from '@/types/api'
 
@@ -18,11 +19,15 @@ import type { SecurityEventRead } from '@/types/api'
  *
  * "Open Full Event Detail" is a real, existing route (EventDetailPage)
  * -- a permalink into the same evidence, not a duplicate rendering of
- * it. There is deliberately no "Open Alert"/"Open Case" action here:
- * discovery confirmed no reverse Event -> Alert relationship endpoint
- * exists in AMNIX today, so showing one would be a fabricated
- * relationship (see the Step 12X completion report's own Limitations
- * section).
+ * it.
+ *
+ * Step 12Y: "Linked Alerts" (GET /events/{id}/alerts, via the shared
+ * LinkedAlertsPanel also used by EventDetailPage) closes the gap Step
+ * 12X's own Limitations section flagged -- the reverse Event -> Alert
+ * relationship now exists. LinkedAlertsPanel is keyed on `event.id` and
+ * only mounts once this panel actually renders a selected event, so
+ * selecting a row fetches it exactly once; nothing in the hunt results
+ * table itself ever triggers this request (no N+1 across rows).
  */
 export function EventInspectorPanel({
   event,
@@ -64,6 +69,10 @@ export function EventInspectorPanel({
 
           <div className="border-t border-border pt-4">
             <EventEvidenceFields event={event} />
+          </div>
+
+          <div className="-mx-5 border-t border-border">
+            <LinkedAlertsPanel eventId={event.id} />
           </div>
 
           <Link to={`/events/${event.id}`} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent-strong hover:text-accent">
