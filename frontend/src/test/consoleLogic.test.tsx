@@ -374,4 +374,52 @@ describe('buildIncidentTimeline (the centerpiece merge -- no fake entries)', () 
     expect(timeline.find((e) => e.id === 'audit-a1')?.category).toBe('Owner')
     expect(timeline.find((e) => e.id === 'audit-a2')?.category).toBe('Alerts')
   })
+
+  // ---- Step 13B: navigateTo, deterministic ordering ----
+
+  it('gives an Alert-linked audit entry a real navigateTo target, and a status/owner-only audit entry none', () => {
+    const timeline = buildIncidentTimeline({
+      audits: [
+        makeAudit({ id: 'a1', action: 'CASE_ALERT_LINKED', related_alert_id: 'alert-42' }),
+        makeAudit({ id: 'a2', action: 'CASE_STATUS_CHANGED', related_alert_id: null }),
+      ],
+      notes: [],
+    })
+    expect(timeline.find((e) => e.id === 'audit-a1')?.navigateTo).toBe('/alerts/alert-42')
+    expect(timeline.find((e) => e.id === 'audit-a2')?.navigateTo).toBeUndefined()
+  })
+
+  it('gives an Investigation (real SecurityEvent) entry a real /events/{id} navigateTo target -- never an invented Case route', () => {
+    const timeline = buildIncidentTimeline({
+      audits: [],
+      notes: [],
+      focusedAlertTimeline: [makeTimelineEntry({ event_id: 'evt-77', event_type: 'process_creation' })],
+    })
+    expect(timeline[0].navigateTo).toBe('/events/evt-77')
+  })
+
+  it('gives Note and Copilot entries no navigateTo -- neither has a legitimate single navigation target', () => {
+    const noteTimeline = buildIncidentTimeline({ audits: [], notes: [makeNote()] })
+    expect(noteTimeline[0].navigateTo).toBeUndefined()
+
+    const copilotTimeline = buildIncidentTimeline({
+      audits: [],
+      notes: [],
+      focusedAlertCopilotAudits: [makeCopilotAudit()],
+    })
+    expect(copilotTimeline[0].navigateTo).toBeUndefined()
+  })
+
+  it('breaks identical timestamps deterministically by id, never leaving ordering to chance', () => {
+    const sameInstant = '2026-01-01T00:00:00.000Z'
+    const a = makeAudit({ id: 'zzz', created_at: sameInstant })
+    const b = makeAudit({ id: 'aaa', created_at: sameInstant })
+
+    const run1 = buildIncidentTimeline({ audits: [a, b], notes: [] }).map((e) => e.id)
+    const run2 = buildIncidentTimeline({ audits: [b, a], notes: [] }).map((e) => e.id)
+
+    // Same result regardless of input array order, and repeatable.
+    expect(run1).toEqual(run2)
+    expect(run1).toEqual(['audit-aaa', 'audit-zzz'])
+  })
 })

@@ -19,6 +19,13 @@
  * that accepts investigation/Copilot data is written to accept "not yet
  * loaded" (undefined) as a normal, honest state, never a fabricated
  * empty-means-nothing-exists assumption.
+ *
+ * Step 13B: buildIncidentTimeline()/IncidentTimelineEntry are also reused
+ * verbatim by CaseTimelinePanel (features/cases/components) for
+ * CaseDetailPage's own Case Investigation Timeline -- per that step's
+ * own explicit instruction ("do NOT create two different timeline
+ * implementations"), this file is the one, shared source of truth for
+ * assembling a Case's timeline, not Console-exclusive.
  */
 
 import { compareAlertPriority } from '@/features/alerts/priority'
@@ -328,6 +335,15 @@ export interface IncidentTimelineEntry {
    * fabricated name or a guessed actor.
    */
   actor: string | null
+  /** Step 13B §4/§8: a real, already-existing SPA route this entry can
+   * navigate to (an Alert or an Event, via the entry's own real
+   * related_alert_id/event_id) -- undefined when the source has no
+   * legitimate single navigation target (a Note; a Copilot audit, which
+   * is only ever meaningful in the context of its already-visible
+   * focused alert). Never a synthesized Case route: Event->Case has no
+   * authoritative direct path (see Step 12Y's own discovery).
+   */
+  navigateTo?: string
 }
 
 function summarizeTimelineEntry(entry: TimelineEntry): string {
@@ -372,6 +388,7 @@ export function buildIncidentTimeline(input: {
               .join(' ')
           : null,
       actor: audit.actor_user_id,
+      navigateTo: audit.related_alert_id ? `/alerts/${audit.related_alert_id}` : undefined,
     })
   }
 
@@ -394,6 +411,7 @@ export function buildIncidentTimeline(input: {
       title: event.event_type,
       description: summarizeTimelineEntry(event),
       actor: null,
+      navigateTo: `/events/${event.event_id}`,
     })
   }
 
@@ -408,5 +426,12 @@ export function buildIncidentTimeline(input: {
     })
   }
 
-  return entries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+  // Newest-first; ties (identical timestamp, e.g. server_default=func.now()
+  // resolving to the same instant within one transaction) break
+  // deterministically on the entry's own stable id string -- never left
+  // to incidental array/object ordering.
+  return entries.sort((a, b) => {
+    const diff = new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    return diff !== 0 ? diff : a.id.localeCompare(b.id)
+  })
 }

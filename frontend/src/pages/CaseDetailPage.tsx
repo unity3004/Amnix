@@ -11,12 +11,14 @@ import { useAuth } from '@/features/auth/useAuth'
 import { useCaseDetail } from '@/features/cases/useCaseDetail'
 import { useCaseAlerts } from '@/features/cases/useCaseAlerts'
 import { useCaseNotes } from '@/features/cases/useCaseNotes'
+import { useCaseAudit } from '@/features/cases/useCaseAudit'
 import { CaseEditPanel } from '@/features/cases/components/CaseEditPanel'
 import { CaseStatusPanel } from '@/features/cases/components/CaseStatusPanel'
 import { CaseOwnerPanel } from '@/features/cases/components/CaseOwnerPanel'
 import { CaseAlertsPanel } from '@/features/cases/components/CaseAlertsPanel'
 import { CaseEvidenceSummaryPanel } from '@/features/cases/components/CaseEvidenceSummaryPanel'
 import { CaseClosureReadinessPanel } from '@/features/cases/components/CaseClosureReadinessPanel'
+import { CaseTimelinePanel } from '@/features/cases/components/CaseTimelinePanel'
 import { CaseNotesPanel } from '@/features/cases/components/CaseNotesPanel'
 import { CaseAuditPanel } from '@/features/cases/components/CaseAuditPanel'
 import { CaseWorkflowGuidance } from '@/features/cases/components/CaseWorkflowGuidance'
@@ -64,6 +66,12 @@ export function CaseDetailPage() {
   // /cases/{id}/notes, not two). Only here so Closure Readiness can
   // read a REAL notes count without a separate fetch.
   const { data: notesData } = useCaseNotes(caseId)
+  // Step 13B: same dedup precedent as alertsData/notesData above --
+  // shares its cache/network request with CaseAuditPanel's own identical
+  // useCaseAudit(caseId) call below (same queryKey -> one GET
+  // /cases/{id}/audit, not two). Only here so the Case Investigation
+  // Timeline can read REAL audit entries without a separate fetch.
+  const { data: auditData } = useCaseAudit(caseId)
   const [isEditing, setIsEditing] = useState(false)
 
   return (
@@ -167,6 +175,18 @@ export function CaseDetailPage() {
           <Card className="mt-4 overflow-hidden">
             <CaseWorkflowGuidance />
           </Card>
+
+          {/* ---- Case Investigation Timeline (Step 13B): CASE CREATED ->
+           * ALERT LINKED -> SECURITY EVENT -> ANALYST NOTE -> STATUS/
+           * PRIORITY/OWNER CHANGES -> RESOLUTION, assembled from real
+           * CaseAudit/CaseNote data (already loaded above) plus one
+           * analyst-selected alert's real investigation/Copilot activity.
+           * Reuses the Step 12W Incident Console's own timeline pipeline
+           * verbatim (see CaseTimelinePanel's own docstring) -- this is
+           * not a second timeline implementation. ---- */}
+          <div className="mt-4">
+            <CaseTimelinePanel caseItem={caseItem} alerts={alertsData?.items ?? []} notes={notesData?.items ?? []} audits={auditData?.items ?? []} />
+          </div>
 
           <Card className="mt-4 overflow-hidden">
             <CaseStatusPanel caseItem={caseItem} />

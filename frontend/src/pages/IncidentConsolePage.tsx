@@ -91,7 +91,12 @@ export function IncidentConsolePage() {
             hasEntities={Boolean(incident.investigation && incident.investigation.timeline.length > 0)}
           />
 
-          <IncidentTimelinePanel entries={incident.timeline} focusedAlertLoaded={Boolean(incident.investigation)} />
+          <IncidentTimelinePanel
+            entries={incident.timeline}
+            focusedAlertLoaded={Boolean(incident.investigation)}
+            caseId={caseItem.id}
+            caseNumber={caseItem.case_number}
+          />
 
           <EvidencePanel
             alerts={incident.alerts}

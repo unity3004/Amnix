@@ -7,7 +7,15 @@ import { renderWithProviders } from './utils'
 import * as casesService from '@/services/casesService'
 import * as alertsService from '@/services/alertsService'
 import { ApiError } from '@/services/httpClient'
-import type { AlertListResponse, AlertRead, CaseAuditListResponse, CaseNoteListResponse, CaseRead } from '@/types/api'
+import type {
+  AlertListResponse,
+  AlertRead,
+  CaseAuditListResponse,
+  CaseNoteListResponse,
+  CaseRead,
+  CopilotAuditListResponse,
+  InvestigationContext,
+} from '@/types/api'
 
 const ANALYST = {
   id: 'analyst-1',
@@ -390,8 +398,12 @@ describe('Step 12S: SOC Case Detail (real backend data)', () => {
     })
     const { container } = renderCaseDetail()
 
-    expect(await screen.findByText('Case created')).toBeInTheDocument()
-    expect(screen.getByText('Case closed')).toBeInTheDocument()
+    // "Case created"/"Case closed" legitimately appear twice -- once in
+    // this dedicated Audit History panel, once more in the Step 13B
+    // merged Case Investigation Timeline above it (same real audit rows,
+    // two honest views) -- so this asserts presence, not uniqueness.
+    expect((await screen.findAllByText('Case created')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Case closed').length).toBeGreaterThan(0)
     expect(screen.queryByText('CASE_UPDATED')).not.toBeInTheDocument()
     // Distinguishable by icon SHAPE, not only by label text.
     expect(container.querySelector('.lucide-file-plus')).toBeTruthy()
@@ -495,10 +507,14 @@ describe('Step 13A: Analyst Notes -- real author identity', () => {
     })
     renderCaseDetail()
 
-    expect(await screen.findByText('My own note.')).toBeInTheDocument()
-    expect(screen.getByText('Someone else wrote this.')).toBeInTheDocument()
-    expect(screen.getByText('You')).toBeInTheDocument()
-    expect(screen.getByText('other-analyst-99')).toBeInTheDocument()
+    // Each note body legitimately appears twice -- once in this
+    // dedicated Analyst Notes panel, once more in the Step 13B merged
+    // Case Investigation Timeline above it (same real notes, two honest
+    // views) -- so this asserts presence, not uniqueness.
+    expect((await screen.findAllByText('My own note.')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Someone else wrote this.').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('You').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('other-analyst-99').length).toBeGreaterThan(0)
   })
 
   it('never sends a client-supplied author -- only the note body is posted, server resolves the author', async () => {
@@ -681,5 +697,334 @@ describe('Step 13A: cross-case isolation', () => {
     renderCaseDetail('/cases/case-2')
     expect(await screen.findByText('case-2 exclusive alert')).toBeInTheDocument()
     expect(screen.queryByText('case-1 exclusive alert')).not.toBeInTheDocument()
+  })
+})
+
+function makeInvestigation(overrides: Partial<InvestigationContext> = {}): InvestigationContext {
+  const now = new Date().toISOString()
+  return {
+    alert: makeAlert(),
+    timeline: [],
+    entities: { hostnames: [], usernames: [], source_ips: [], destination_ips: [], process_names: [], file_hashes: [] },
+    summary: {
+      text: '',
+      event_count: 0,
+      unique_host_count: 0,
+      unique_user_count: 0,
+      timespan_seconds: null,
+      first_event_at: null,
+      last_event_at: null,
+    },
+    generated_at: now,
+    ...overrides,
+  }
+}
+function emptyCopilotAudits(): CopilotAuditListResponse {
+  return { items: [], limit: 50, offset: 0 }
+}
+
+describe('Step 13B: Case Investigation Timeline', () => {
+  it('shows real case-audit and note entries with no alert selected, and fires no Investigation/Copilot request', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'alert-1', title: 'Brute force detected' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue({
+      items: [{ id: 'note-1', case_id: 'case-1', author_id: ANALYST.id, body: 'Initial triage complete.', created_at: new Date().toISOString() }],
+      limit: 50,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue({
+      items: [
+        {
+          id: 'audit-1',
+          case_id: 'case-1',
+          actor_user_id: ANALYST.id,
+          action: 'CASE_CREATED',
+          related_alert_id: null,
+          previous_value: null,
+          new_value: null,
+          created_at: new Date().toISOString(),
+        },
+      ],
+      limit: 200,
+      offset: 0,
+    })
+    const investigationSpy = vi.spyOn(alertsService, 'getAlertInvestigation')
+    const copilotSpy = vi.spyOn(alertsService, 'getCopilotAudits')
+    const { container } = renderCaseDetail()
+
+    const timeline = await screen.findByText('Incident Timeline')
+    const timelineCard = timeline.closest('#console-timeline') ?? container.querySelector('#console-timeline')!
+    expect(within(timelineCard).getByText('Case created')).toBeInTheDocument()
+    expect(within(timelineCard).getByText('Initial triage complete.')).toBeInTheDocument()
+    expect(investigationSpy).not.toHaveBeenCalled()
+    expect(copilotSpy).not.toHaveBeenCalled()
+  })
+
+  it('loads a real SecurityEvent into the timeline only after the analyst explicitly selects its alert -- exactly one request', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'alert-1', title: 'Brute force detected', severity: 'high' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    const investigationSpy = vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(
+      makeInvestigation({
+        timeline: [
+          {
+            event_id: 'evt-1',
+            event_timestamp: new Date().toISOString(),
+            event_type: 'process_creation',
+            source: 'sysmon',
+            hostname: 'WIN-01',
+            username: 'jdoe',
+            source_ip: null,
+            destination_ip: null,
+            process_name: 'powershell.exe',
+            command_line: null,
+          },
+        ],
+      }),
+    )
+    vi.spyOn(alertsService, 'getCopilotAudits').mockResolvedValue(emptyCopilotAudits())
+    const { container } = renderCaseDetail()
+
+    await screen.findByText('Incident Timeline')
+    expect(investigationSpy).not.toHaveBeenCalled()
+
+    await userEvent.setup().selectOptions(screen.getByLabelText('Include telemetry from alert'), 'alert-1')
+
+    const timelineCard = container.querySelector('#console-timeline')!
+    expect(await within(timelineCard).findByText('process_creation')).toBeInTheDocument()
+    expect(within(timelineCard).getByText(/WIN-01/)).toBeInTheDocument()
+    await waitFor(() => expect(investigationSpy).toHaveBeenCalledTimes(1))
+    expect(investigationSpy).toHaveBeenCalledWith('alert-1')
+  })
+
+  it('shows real Copilot activity only once available, labeled as Copilot -- never as an analyst decision or confirmed finding', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'alert-1', title: 'Brute force detected' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(makeInvestigation())
+    vi.spyOn(alertsService, 'getCopilotAudits').mockResolvedValue({
+      items: [
+        {
+          id: 'ca-1',
+          alert_id: 'alert-1',
+          request_type: 'ask',
+          provider_name: 'mock',
+          model_name: 'mock-model',
+          outcome: 'success',
+          validation_status: 'passed',
+          http_status: 200,
+          question_fingerprint: 'fp',
+          question_length: 10,
+          history_turn_count: null,
+          duration_ms: 120,
+          created_at: new Date().toISOString(),
+        },
+      ],
+      limit: 50,
+      offset: 0,
+    })
+    const { container } = renderCaseDetail()
+
+    await screen.findByText('Incident Timeline')
+    await userEvent.setup().selectOptions(screen.getByLabelText('Include telemetry from alert'), 'alert-1')
+
+    const timelineCard = container.querySelector('#console-timeline')!
+    expect(await within(timelineCard).findByText('Copilot asked')).toBeInTheDocument()
+    const entryList = timelineCard.querySelector('ul')!
+    expect(within(entryList).getByText('Copilot')).toBeInTheDocument()
+    expect(timelineCard.textContent).not.toMatch(/analyst decision|confirmed finding|verdict|confidence/i)
+  })
+
+  it('provides real navigation from timeline entries -- Open Event to Event Detail, Open Alert with case context preserved', async () => {
+    const caseItem = makeCase({ id: 'case-1', case_number: 42 })
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'alert-1', title: 'Brute force detected' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue({
+      items: [
+        {
+          id: 'audit-1',
+          case_id: 'case-1',
+          actor_user_id: ANALYST.id,
+          action: 'CASE_ALERT_LINKED',
+          related_alert_id: 'alert-1',
+          previous_value: null,
+          new_value: null,
+          created_at: new Date().toISOString(),
+        },
+      ],
+      limit: 200,
+      offset: 0,
+    })
+    vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(
+      makeInvestigation({
+        timeline: [
+          {
+            event_id: 'evt-9',
+            event_timestamp: new Date().toISOString(),
+            event_type: 'authentication_failure',
+            source: 'auth-log',
+            hostname: null,
+            username: null,
+            source_ip: null,
+            destination_ip: null,
+            process_name: null,
+            command_line: null,
+          },
+        ],
+      }),
+    )
+    vi.spyOn(alertsService, 'getCopilotAudits').mockResolvedValue(emptyCopilotAudits())
+    const { container } = renderCaseDetail()
+
+    await screen.findByText('Incident Timeline')
+    const timelineCard = container.querySelector('#console-timeline')!
+    const openAlertLink = within(timelineCard).getByRole('link', { name: /open alert/i })
+    expect(openAlertLink).toHaveAttribute('href', '/alerts/alert-1?case=case-1&caseNumber=42')
+
+    await userEvent.setup().selectOptions(screen.getByLabelText('Include telemetry from alert'), 'alert-1')
+    const openEventLink = await within(timelineCard).findByRole('link', { name: /open event/i })
+    expect(openEventLink).toHaveAttribute('href', '/events/evt-9')
+  })
+
+  it('switching the focused alert replaces its events rather than accumulating them -- the same event can never appear twice', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'alert-a', title: 'Alert A' }), makeAlert({ id: 'alert-b', title: 'Alert B' })],
+      limit: 2,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    vi.spyOn(alertsService, 'getAlertInvestigation').mockImplementation((alertId) =>
+      Promise.resolve(
+        makeInvestigation({
+          timeline: [
+            {
+              event_id: alertId === 'alert-a' ? 'evt-a' : 'evt-b',
+              event_timestamp: new Date().toISOString(),
+              event_type: alertId === 'alert-a' ? 'event_type_a' : 'event_type_b',
+              source: 's',
+              hostname: null,
+              username: null,
+              source_ip: null,
+              destination_ip: null,
+              process_name: null,
+              command_line: null,
+            },
+          ],
+        }),
+      ),
+    )
+    vi.spyOn(alertsService, 'getCopilotAudits').mockResolvedValue(emptyCopilotAudits())
+    const { container } = renderCaseDetail()
+    const timelineCard = () => container.querySelector('#console-timeline')!
+
+    await screen.findByText('Incident Timeline')
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText('Include telemetry from alert'), 'alert-a')
+    expect(await within(timelineCard()).findByText('event_type_a')).toBeInTheDocument()
+
+    await user.selectOptions(screen.getByLabelText('Include telemetry from alert'), 'alert-b')
+    expect(await within(timelineCard()).findByText('event_type_b')).toBeInTheDocument()
+    expect(within(timelineCard()).queryByText('event_type_a')).not.toBeInTheDocument()
+    expect(within(timelineCard()).getAllByText('event_type_b')).toHaveLength(1)
+  })
+
+  it('never fetches Investigation/Copilot for every linked alert -- only ever the one explicitly selected', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'alert-a' }), makeAlert({ id: 'alert-b' }), makeAlert({ id: 'alert-c' })],
+      limit: 3,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    const investigationSpy = vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(makeInvestigation())
+    const copilotSpy = vi.spyOn(alertsService, 'getCopilotAudits').mockResolvedValue(emptyCopilotAudits())
+    renderCaseDetail()
+
+    await screen.findByText('Incident Timeline')
+    expect(investigationSpy).not.toHaveBeenCalled()
+    expect(copilotSpy).not.toHaveBeenCalled()
+
+    await userEvent.setup().selectOptions(screen.getByLabelText('Include telemetry from alert'), 'alert-b')
+
+    await waitFor(() => expect(investigationSpy).toHaveBeenCalledTimes(1))
+    expect(investigationSpy).toHaveBeenCalledWith('alert-b')
+    await waitFor(() => expect(copilotSpy).toHaveBeenCalledTimes(1))
+    expect(copilotSpy).toHaveBeenCalledWith('alert-b', { limit: 50 })
+  })
+
+  it('shows an honest empty state for a case with no audit, no notes, and no alerts', async () => {
+    mockCaseFixtures(makeCase())
+    const { container } = renderCaseDetail()
+
+    await screen.findByText('Incident Timeline')
+    const timelineCard = container.querySelector('#console-timeline')!
+    expect(within(timelineCard).getByText('No timeline entries match this filter.')).toBeInTheDocument()
+    expect(within(timelineCard).queryByLabelText('Include telemetry from alert')).not.toBeInTheDocument()
+  })
+
+  it('shows an honest state for an alert with no recorded telemetry, without fabricating an event', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'alert-1', title: 'Quiet alert' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(makeInvestigation({ timeline: [] }))
+    vi.spyOn(alertsService, 'getCopilotAudits').mockResolvedValue(emptyCopilotAudits())
+    const { container } = renderCaseDetail()
+
+    await screen.findByText('Incident Timeline')
+    await userEvent.setup().selectOptions(screen.getByLabelText('Include telemetry from alert'), 'alert-1')
+
+    await waitFor(() => expect(container.querySelector('#console-timeline')).toHaveTextContent('No timeline entries match this filter.'))
+    expect(document.body.textContent).not.toMatch(/investigation started/i)
+  })
+
+  it('only lists this case\'s own linked alerts in the selector -- never a cross-case alert', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'alert-own', title: 'This case\'s own alert' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    renderCaseDetail()
+
+    const select = await screen.findByLabelText('Include telemetry from alert')
+    const options = within(select).getAllByRole('option').map((o) => o.textContent)
+    expect(options.some((t) => t?.includes("This case's own alert"))).toBe(true)
+    expect(options).toHaveLength(2) // "— none selected —" + this case's one alert
   })
 })

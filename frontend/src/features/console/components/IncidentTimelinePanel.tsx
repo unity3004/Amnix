@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react'
-import { ArrowDownUp, FileText, FlaskConical, Link2, ScrollText, ShieldAlert, StickyNote, User } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+import { ArrowDownUp, ArrowRight, FileText, FlaskConical, Link2, ScrollText, ShieldAlert, StickyNote, User } from 'lucide-react'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { cn } from '@/lib/cn'
 import { formatRelativeTime } from '@/lib/format'
+import { buildCaseContextQuery } from '@/features/cases/caseNavigationContext'
 import type { IncidentTimelineCategory, IncidentTimelineEntry } from '../logic'
 
 const CATEGORY_ICON: Record<IncidentTimelineCategory, typeof ShieldAlert> = {
@@ -24,10 +26,38 @@ const FILTERS: Array<'All' | IncidentTimelineCategory> = ['All', 'Alerts', 'Inve
  * (client-side, no extra request) and optionally reverses the already-
  * fetched array. Category chips are hidden when their real count is
  * zero, so the filter bar never advertises a filter with nothing behind it.
+ *
+ * Step 13B: shared verbatim by CaseTimelinePanel (features/cases) for
+ * CaseDetailPage's own Case Investigation Timeline -- see logic.ts's own
+ * top-of-file note. `caseId`/`caseNumber`, when supplied, are used only
+ * to carry the existing Step 12U case-navigation-context query string on
+ * an entry's Alert link (`entry.navigateTo` starting with `/alerts/`);
+ * Event links never take case context (Event Detail has no such
+ * concept). Never fetches anything -- `navigateTo` was already computed
+ * by buildIncidentTimeline() from real, already-loaded data.
+ *
+ * `alertSelector`, when supplied, renders inside this SAME Card (between
+ * the header and the filter chips) -- the one seam CaseTimelinePanel
+ * uses to add its "which alert's telemetry to include" control without
+ * this becoming two separately-styled timeline surfaces. Console never
+ * passes it, so Console's own rendering is byte-for-byte unchanged.
  */
-export function IncidentTimelinePanel({ entries, focusedAlertLoaded }: { entries: IncidentTimelineEntry[]; focusedAlertLoaded: boolean }) {
+export function IncidentTimelinePanel({
+  entries,
+  focusedAlertLoaded,
+  caseId,
+  caseNumber,
+  alertSelector,
+}: {
+  entries: IncidentTimelineEntry[]
+  focusedAlertLoaded: boolean
+  caseId?: string
+  caseNumber?: number
+  alertSelector?: ReactNode
+}) {
   const [filter, setFilter] = useState<'All' | IncidentTimelineCategory>('All')
   const [oldestFirst, setOldestFirst] = useState(false)
+  const caseContextQuery = caseId && caseNumber !== undefined ? buildCaseContextQuery({ caseId, caseNumber }) : ''
 
   const counts = useMemo(() => {
     const map = new Map<string, number>()
@@ -46,8 +76,8 @@ export function IncidentTimelinePanel({ entries, focusedAlertLoaded }: { entries
         title="Incident Timeline"
         subtitle={
           focusedAlertLoaded
-            ? 'Merged from case audit, notes, the focused alert\'s investigation, and its Copilot activity.'
-            : 'Merged from case audit and notes -- select an alert below to add its investigation/Copilot activity.'
+            ? "Assembled from case audit, notes, the focused alert's investigation, and its Copilot activity -- not a persisted historical event stream, and not guaranteed to be complete."
+            : 'Assembled from case audit and notes -- select an alert below to add its investigation/Copilot activity. Not a persisted historical event stream.'
         }
         action={
           <Button variant="ghost" size="sm" onClick={() => setOldestFirst((v) => !v)}>
@@ -56,6 +86,8 @@ export function IncidentTimelinePanel({ entries, focusedAlertLoaded }: { entries
           </Button>
         }
       />
+
+      {alertSelector}
 
       <div className="flex flex-wrap gap-1.5 border-b border-border px-5 pb-3">
         {FILTERS.filter((f) => f === 'All' || (counts.get(f) ?? 0) > 0).map((f) => (
@@ -93,12 +125,21 @@ export function IncidentTimelinePanel({ entries, focusedAlertLoaded }: { entries
                     </span>
                   </div>
                   {entry.description && <p className="mt-0.5 text-xs text-fg-subtle">{entry.description}</p>}
-                  <p className="mt-1 flex items-center gap-2 text-[11px] text-fg-subtle">
+                  <p className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-fg-subtle">
                     <span className="rounded-sm border border-border-faint px-1 py-0.5">{entry.category}</span>
                     {entry.actor && (
                       <span className="font-mono" title={entry.actor}>
                         by {entry.actor}
                       </span>
+                    )}
+                    {entry.navigateTo && (
+                      <Link
+                        to={entry.navigateTo.startsWith('/alerts/') ? `${entry.navigateTo}${caseContextQuery}` : entry.navigateTo}
+                        className="ml-auto flex items-center gap-1 font-medium text-accent-strong hover:text-accent"
+                      >
+                        {entry.navigateTo.startsWith('/alerts/') ? 'Open Alert' : 'Open Event'}
+                        <ArrowRight className="size-3 shrink-0" strokeWidth={2} aria-hidden="true" />
+                      </Link>
                     )}
                   </p>
                 </div>
