@@ -16,6 +16,7 @@ import { CaseEditPanel } from '@/features/cases/components/CaseEditPanel'
 import { CaseStatusPanel } from '@/features/cases/components/CaseStatusPanel'
 import { CaseOwnerPanel } from '@/features/cases/components/CaseOwnerPanel'
 import { CaseAlertsPanel } from '@/features/cases/components/CaseAlertsPanel'
+import { CaseSummaryPanel } from '@/features/cases/components/CaseSummaryPanel'
 import { CaseEvidenceSummaryPanel } from '@/features/cases/components/CaseEvidenceSummaryPanel'
 import { CaseClosureReadinessPanel } from '@/features/cases/components/CaseClosureReadinessPanel'
 import { CaseTimelinePanel } from '@/features/cases/components/CaseTimelinePanel'
@@ -172,6 +173,20 @@ export function CaseDetailPage() {
             )}
           </Card>
 
+          {/* ---- Case Summary & Incident Narrative (Step 13C): a
+           * deterministic, application-generated orientation layer --
+           * NOT an AI conclusion, NOT a risk/threat score. Built only
+           * from the alerts/notes already loaded above (zero additional
+           * request); reuses the existing Step 12W DetectionRulesPanel/
+           * MitreCoveragePanel verbatim rather than a second
+           * implementation. See CaseSummaryPanel's own docstring for why
+           * it deliberately omits a per-event telemetry breakdown and a
+           * Copilot section (both would require an N+1 per-alert fetch
+           * this page does not make). ---- */}
+          <div className="mt-4">
+            <CaseSummaryPanel caseItem={caseItem} alerts={alertsData?.items ?? []} notes={notesData?.items ?? []} currentUserId={user?.id} />
+          </div>
+
           <Card className="mt-4 overflow-hidden">
             <CaseWorkflowGuidance />
           </Card>
@@ -192,7 +207,7 @@ export function CaseDetailPage() {
             <CaseStatusPanel caseItem={caseItem} />
           </Card>
 
-          <Card className="mt-4 overflow-hidden">
+          <Card id="case-closure-readiness" className="mt-4 scroll-mt-20 overflow-hidden">
             <CaseClosureReadinessPanel caseItem={caseItem} alerts={alertsData?.items ?? []} notes={notesData?.items ?? []} />
           </Card>
 
@@ -212,7 +227,7 @@ export function CaseDetailPage() {
             <CaseAlertsPanel caseId={caseItem.id} caseNumber={caseItem.case_number} />
           </Card>
 
-          <Card className="mt-4 overflow-hidden">
+          <Card id="case-notes-panel" className="mt-4 scroll-mt-20 overflow-hidden">
             <CaseNotesPanel caseId={caseItem.id} />
           </Card>
 

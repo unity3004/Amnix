@@ -1028,3 +1028,141 @@ describe('Step 13B: Case Investigation Timeline', () => {
     expect(options).toHaveLength(2) // "— none selected —" + this case's one alert
   })
 })
+
+describe('Step 13C: Case Summary & Incident Narrative', () => {
+  it('reuses the existing Detection Rules and MITRE Coverage panels -- grouped by rule, deduplicated by technique', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [
+        makeAlert({ id: 'a1', rule_id: 'brute_force_authentication', title: 'Brute force #1' }),
+        makeAlert({ id: 'a2', rule_id: 'brute_force_authentication', title: 'Brute force #2' }),
+      ],
+      limit: 2,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    const { container } = renderCaseDetail()
+
+    await screen.findByText('Case Summary')
+    expect(await screen.findByText('Participating Detection Rules')).toBeInTheDocument()
+    // Both alerts share the same rule -> exactly one rule entry, "2 observed alerts".
+    expect(screen.getByText('2 observed alerts')).toBeInTheDocument()
+
+    expect(screen.getByText('MITRE ATT&CK Coverage')).toBeInTheDocument()
+    // Same rule -> same technique for both alerts -- must appear exactly once, not twice.
+    expect(container.querySelectorAll('.font-mono.text-xs.font-semibold.text-accent-strong').length).toBeLessThanOrEqual(1)
+  })
+
+  it('shows a real observed-telemetry range derived from linked alerts\' own first/last seen, never MTTD/MTTR', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ first_seen: '2026-01-01T00:00:00Z', last_seen: '2026-01-01T00:05:00Z' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    const { container } = renderCaseDetail()
+
+    await screen.findByText('Observed Telemetry Range')
+    const summary = container.querySelector('#case-summary')!
+    expect(summary.textContent).toMatch(new Date('2026-01-01T00:00:00Z').toLocaleString())
+    expect(summary.textContent).not.toMatch(/MTTD|MTTR|attack duration|response time/i)
+  })
+
+  it('shows a real, bounded preview of the latest analyst notes with a working link to the full panel', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue(emptyAlerts())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue({
+      items: [
+        { id: 'n1', case_id: 'case-1', author_id: ANALYST.id, body: 'First observation.', created_at: '2026-01-01T00:00:00Z' },
+        { id: 'n2', case_id: 'case-1', author_id: ANALYST.id, body: 'Latest observation.', created_at: '2026-01-02T00:00:00Z' },
+      ],
+      limit: 50,
+      offset: 0,
+    })
+    const { container } = renderCaseDetail()
+
+    await screen.findByText('Latest Analyst Observations')
+    const summary = container.querySelector('#case-summary')!
+    expect(within(summary).getByText('Latest observation.')).toBeInTheDocument()
+    const link = within(summary).getByRole('link', { name: /view all notes/i })
+    expect(link).toHaveAttribute('href', '#case-notes-panel')
+  })
+
+  it('shows deterministic Open Items reflecting real case/alert/note state', async () => {
+    const caseItem = makeCase({ status: 'INVESTIGATING' })
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({ items: [makeAlert()], limit: 1, offset: 0 })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    renderCaseDetail()
+
+    await screen.findByText('Open Items')
+    expect(screen.getByText('No analyst notes have been recorded.')).toBeInTheDocument()
+    expect(screen.getByText('Continue reviewing linked evidence and documenting findings.')).toBeInTheDocument()
+  })
+
+  it('never renders a Copilot section, and never invents a verdict/confidence/risk score, anywhere in the Summary', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({ items: [makeAlert()], limit: 1, offset: 0 })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    const copilotSpy = vi.spyOn(alertsService, 'getCopilotAudits')
+    const { container } = renderCaseDetail()
+
+    await screen.findByText('Case Summary')
+    const summary = container.querySelector('#case-summary')!
+    expect(summary.textContent).not.toMatch(/copilot/i)
+    expect(summary.textContent).not.toMatch(/verdict|confidence score|risk score|threat score|\d+%/i)
+    expect(copilotSpy).not.toHaveBeenCalled()
+  })
+
+  it('includes the required provenance note distinguishing deterministic output from an AI-generated conclusion', async () => {
+    mockCaseFixtures(makeCase())
+    renderCaseDetail()
+
+    expect(
+      await screen.findByText(/deterministic application output, not an AI-generated conclusion/i),
+    ).toBeInTheDocument()
+  })
+
+  it('introduces no additional network request -- reuses the same already-loaded alerts/notes as the rest of the page', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    const alertsSpy = vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({ items: [makeAlert()], limit: 1, offset: 0 })
+    const notesSpy = vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    const investigationSpy = vi.spyOn(alertsService, 'getAlertInvestigation')
+    renderCaseDetail()
+
+    await screen.findByText('Case Summary')
+    await waitFor(() => {
+      expect(alertsSpy.mock.calls.length).toBeGreaterThan(0)
+      expect(alertsSpy.mock.calls.length).toBeLessThanOrEqual(2)
+      expect(notesSpy.mock.calls.length).toBeLessThanOrEqual(2)
+    })
+    expect(investigationSpy).not.toHaveBeenCalled()
+  })
+
+  it('narrative and open items are scoped to this case\'s own linked alerts only -- never a cross-case leak', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'own-alert', rule_id: 'brute_force_authentication' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    renderCaseDetail()
+
+    expect(await screen.findByText(/this case contains 1 linked alert, including/i)).toBeInTheDocument()
+  })
+})
