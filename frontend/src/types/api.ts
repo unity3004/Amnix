@@ -95,6 +95,11 @@ export interface SecurityEventListResponse {
   offset: number
 }
 
+/** Step 12X: hostname/username/source_ip/destination_ip added to the
+ * real GET /events contract -- exact-match only, each backed by an
+ * index that already existed on this table (see backend/app/
+ * repositories/security_event.py::list_recent's own docstring).
+ */
 export interface ListEventsParams {
   limit?: number
   offset?: number
@@ -102,6 +107,10 @@ export interface ListEventsParams {
   source?: string
   since?: string
   until?: string
+  hostname?: string
+  username?: string
+  source_ip?: string
+  destination_ip?: string
 }
 
 // ---------------------------------------------------------------------------

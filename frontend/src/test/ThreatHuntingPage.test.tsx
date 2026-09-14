@@ -1,0 +1,249 @@
+import { describe, expect, it, vi, afterEach } from 'vitest'
+import { screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { Route, Routes } from 'react-router-dom'
+import { ThreatHuntingPage } from '@/pages/ThreatHuntingPage'
+import { renderWithProviders } from './utils'
+import * as eventsService from '@/services/eventsService'
+import { ApiError } from '@/services/httpClient'
+import type { SecurityEventListResponse, SecurityEventRead } from '@/types/api'
+
+afterEach(() => vi.restoreAllMocks())
+
+function makeEvent(overrides: Partial<SecurityEventRead> = {}): SecurityEventRead {
+  const now = new Date().toISOString()
+  return {
+    id: `event-${Math.random().toString(36).slice(2)}`,
+    event_timestamp: now,
+    event_type: 'authentication_failure',
+    source: 'auth-log',
+    hostname: 'workstation-07',
+    username: 'jdoe',
+    source_ip: '10.0.0.5',
+    destination_ip: '10.0.0.1',
+    raw_data: {},
+    created_at: now,
+    ...overrides,
+  }
+}
+function resp(items: SecurityEventRead[]): SecurityEventListResponse {
+  return { items, limit: 50, offset: 0 }
+}
+
+function renderHunting(route = '/threat-hunting') {
+  return renderWithProviders(
+    <Routes>
+      <Route path="/threat-hunting" element={<ThreatHuntingPage />} />
+      <Route path="/events/:eventId" element={<div>EVENT DETAIL MARKER</div>} />
+    </Routes>,
+    { route },
+  )
+}
+
+describe('ThreatHuntingPage: rendering', () => {
+  it('renders the hunting header and structured filter controls', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([]))
+    renderHunting()
+
+    expect(await screen.findByRole('heading', { name: 'Threat Hunting' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Event type')).toBeInTheDocument()
+    expect(screen.getByLabelText('Source')).toBeInTheDocument()
+    expect(screen.getByLabelText('Host')).toBeInTheDocument()
+    expect(screen.getByLabelText('User')).toBeInTheDocument()
+    expect(screen.getByLabelText('Source IP')).toBeInTheDocument()
+    expect(screen.getByLabelText('Destination IP')).toBeInTheDocument()
+    expect(screen.getByLabelText('Time window')).toBeInTheDocument()
+  })
+
+  it('renders REAL event data in the results table', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(
+      resp([makeEvent({ event_type: 'powershell_execution', hostname: 'WIN-7A3B', username: 'asmith' })]),
+    )
+    renderHunting()
+
+    expect(await screen.findByText('powershell_execution')).toBeInTheDocument()
+    expect(screen.getByText('WIN-7A3B')).toBeInTheDocument()
+    expect(screen.getByText('asmith')).toBeInTheDocument()
+  })
+
+  it('never renders a fabricated threat score, confidence, or total', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent()]))
+    renderHunting()
+
+    await screen.findByText('authentication_failure')
+    expect(document.body.textContent).not.toMatch(/threat score|risk score|confidence:\s*\d+%|attacker likelihood|compromise probability/i)
+    expect(document.body.textContent).not.toMatch(/total events:\s*\d/i)
+  })
+})
+
+describe('ThreatHuntingPage: loading / empty / error states', () => {
+  it('shows a loading skeleton before the hunt resolves', () => {
+    vi.spyOn(eventsService, 'listEvents').mockReturnValue(new Promise(() => {}))
+    const { container } = renderHunting()
+    expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+  })
+
+  it('distinguishes an unfiltered empty window from a filtered empty result', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([]))
+    renderHunting()
+    expect(await screen.findByText('No events in this time window.')).toBeInTheDocument()
+
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([]))
+    renderHunting('/threat-hunting?hostname=WIN-9999')
+    expect(await screen.findByText('No events match this hunt.')).toBeInTheDocument()
+  })
+
+  it('shows a safe error state with retry, never a raw exception', async () => {
+    const mock = vi.spyOn(eventsService, 'listEvents').mockRejectedValue(new ApiError(500, null, 'boom'))
+    renderHunting()
+    expect(await screen.findByText(/unable to run this hunt/i)).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/ApiError|TypeError|traceback|boom/i)
+
+    mock.mockResolvedValue(resp([]))
+    await userEvent.setup().click(screen.getByRole('button', { name: /retry/i }))
+    await waitFor(() => expect(screen.getByText('No events in this time window.')).toBeInTheDocument())
+  })
+})
+
+describe('ThreatHuntingPage: filter construction', () => {
+  it('applies structured filters as real GET /events query parameters', async () => {
+    const mock = vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([]))
+    renderHunting()
+    await screen.findByText('No events in this time window.')
+
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Host'), 'WIN-7A3B')
+    await user.type(screen.getByLabelText('User'), 'jdoe')
+    await user.type(screen.getByLabelText('Source IP'), '10.0.0.5')
+    await user.click(screen.getByRole('button', { name: /^apply$/i }))
+
+    await waitFor(() => {
+      const lastCall = mock.mock.calls.at(-1)?.[0]
+      expect(lastCall).toMatchObject({ hostname: 'WIN-7A3B', username: 'jdoe', source_ip: '10.0.0.5' })
+    })
+  })
+
+  it('changing the time window sets a real since bound, never a fabricated total window', async () => {
+    const mock = vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([]))
+    renderHunting()
+    await screen.findByText('No events in this time window.')
+
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText('Time window'), String(7 * 24 * 60))
+    await user.click(screen.getByRole('button', { name: /^apply$/i }))
+
+    await waitFor(() => {
+      const lastCall = mock.mock.calls.at(-1)?.[0]
+      expect(lastCall?.since).toBeDefined()
+      const sinceMs = new Date(lastCall!.since as string).getTime()
+      const expectedMs = Date.now() - 7 * 24 * 60 * 60 * 1000
+      expect(Math.abs(sinceMs - expectedMs)).toBeLessThan(60_000)
+    })
+  })
+
+  it('"All time" omits the since bound entirely', async () => {
+    const mock = vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([]))
+    renderHunting()
+    await screen.findByText('No events in this time window.')
+
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText('Time window'), 'all')
+    await user.click(screen.getByRole('button', { name: /^apply$/i }))
+
+    await waitFor(() => {
+      const lastCall = mock.mock.calls.at(-1)?.[0]
+      expect(lastCall?.since).toBeUndefined()
+    })
+  })
+
+  it('paginates using limit/offset, never claiming a total', async () => {
+    const fullPage = Array.from({ length: 50 }, () => makeEvent())
+    const mock = vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp(fullPage))
+    renderHunting()
+    await screen.findByText('Page 1')
+
+    await userEvent.setup().click(screen.getByRole('button', { name: /^next$/i }))
+
+    await waitFor(() => {
+      const lastCall = mock.mock.calls.at(-1)?.[0]
+      expect(lastCall).toMatchObject({ offset: 50 })
+    })
+  })
+})
+
+describe('ThreatHuntingPage: Event Inspector (zero additional fetch)', () => {
+  it('selecting a row shows real evidence without any per-event API call', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(
+      resp([makeEvent({ id: 'event-focus', process_name: 'powershell.exe', file_hash: 'a'.repeat(64) })]),
+    )
+    const getEventSpy = vi.spyOn(eventsService, 'getEvent')
+    renderHunting()
+
+    await screen.findByText('No event selected.')
+    await userEvent.setup().click(await screen.findByText('authentication_failure'))
+
+    expect(await screen.findByText('powershell.exe')).toBeInTheDocument()
+    expect(screen.getByText('a'.repeat(64))).toBeInTheDocument()
+    expect(getEventSpy).not.toHaveBeenCalled()
+  })
+
+  it('"Open Full Event Detail" links to the real, existing event permalink route', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ id: 'event-999' })]))
+    renderHunting()
+
+    await userEvent.setup().click(await screen.findByText('authentication_failure'))
+    const link = await screen.findByRole('link', { name: /open full event detail/i })
+    expect(link).toHaveAttribute('href', '/events/event-999')
+    await userEvent.setup().click(link)
+    expect(await screen.findByText('EVENT DETAIL MARKER')).toBeInTheDocument()
+  })
+})
+
+describe('ThreatHuntingPage: pivot behavior', () => {
+  it('pivoting on a real event field constructs a real GET /events request, preserving the active window and other filters', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(
+      resp([makeEvent({ id: 'event-pivot', hostname: 'WIN-7A3B', event_type: 'powershell_execution' })]),
+    )
+    const mock = vi.spyOn(eventsService, 'listEvents')
+    renderHunting('/threat-hunting?event_type=powershell_execution&window=60')
+
+    const user = userEvent.setup()
+    await user.click(await screen.findByText('powershell_execution'))
+    await user.click(screen.getByRole('button', { name: /same host/i }))
+
+    await waitFor(() => {
+      const lastCall = mock.mock.calls.at(-1)?.[0]
+      expect(lastCall).toMatchObject({ hostname: 'WIN-7A3B', event_type: 'powershell_execution' })
+      expect(lastCall?.since).toBeDefined()
+    })
+  })
+
+  it('never shows a pivot button for a field the backend cannot filter on', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ process_name: 'powershell.exe' })]))
+    renderHunting()
+
+    await userEvent.setup().click(await screen.findByText('authentication_failure'))
+    expect(screen.queryByRole('button', { name: /same process/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /same file hash/i })).not.toBeInTheDocument()
+  })
+
+  it('only shows a pivot button for a field that is actually present on the selected event', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ destination_ip: null })]))
+    renderHunting()
+
+    await userEvent.setup().click(await screen.findByText('authentication_failure'))
+    expect(screen.getByRole('button', { name: /same host/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /same destination ip/i })).not.toBeInTheDocument()
+  })
+})
+
+describe('ThreatHuntingPage: no N+1', () => {
+  it('renders many events from a single request, never one request per row', async () => {
+    const events = Array.from({ length: 10 }, (_, i) => makeEvent({ id: `evt-${i}` }))
+    const mock = vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp(events))
+    renderHunting()
+
+    await screen.findByText('Page 1')
+    await waitFor(() => expect(mock).toHaveBeenCalledTimes(1))
+  })
+})

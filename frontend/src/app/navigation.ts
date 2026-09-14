@@ -11,6 +11,7 @@ import {
   BarChart3,
   Stethoscope,
   FolderKanban,
+  Crosshair,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -25,6 +26,7 @@ export const primaryNav: NavItem[] = [
   { label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, description: 'Security operations overview' },
   { label: 'Alerts', path: '/alerts', icon: ShieldAlert, description: 'Triaged detection output' },
   { label: 'Events', path: '/events', icon: Activity, description: 'Raw security telemetry' },
+  { label: 'Threat Hunting', path: '/threat-hunting', icon: Crosshair, description: 'Search and pivot across real telemetry' },
   { label: 'Detection Rules', path: '/rules', icon: ListChecks, description: 'Application-controlled detection logic' },
   { label: 'Detection Operations', path: '/operations', icon: Gauge, description: 'Recent detection activity and alert priority' },
   { label: 'SOC Metrics', path: '/metrics', icon: BarChart3, description: 'Operational insights from current telemetry' },

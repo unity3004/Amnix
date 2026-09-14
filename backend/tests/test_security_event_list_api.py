@@ -190,6 +190,123 @@ def test_until_filter(client, db_session):
     assert str(recent.id) not in ids
 
 
+def test_hostname_filter(client, db_session):
+    token = _register_and_login(client)
+    matching = _make_event(db_session, hostname="WIN-7A3B")
+    _make_event(db_session, hostname="WIN-9C1D")
+
+    response = client.get("/events?hostname=WIN-7A3B", headers=_bearer(token))
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == str(matching.id)
+
+
+def test_hostname_filter_is_exact_match_not_substring(client, db_session):
+    _make_event(db_session, hostname="WIN-7A3B")
+    token = _register_and_login(client)
+
+    response = client.get("/events?hostname=WIN", headers=_bearer(token))
+    assert response.json()["items"] == []
+
+
+def test_username_filter(client, db_session):
+    token = _register_and_login(client)
+    matching = _make_event(db_session, username="jdoe")
+    _make_event(db_session, username="asmith")
+
+    response = client.get("/events?username=jdoe", headers=_bearer(token))
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == str(matching.id)
+
+
+def test_source_ip_filter(client, db_session):
+    token = _register_and_login(client)
+    matching = _make_event(db_session, source_ip="10.0.0.5")
+    _make_event(db_session, source_ip="10.0.0.6")
+
+    response = client.get("/events?source_ip=10.0.0.5", headers=_bearer(token))
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == str(matching.id)
+
+
+def test_destination_ip_filter(client, db_session):
+    token = _register_and_login(client)
+    matching = _make_event(db_session, destination_ip="192.168.1.1")
+    _make_event(db_session, destination_ip="192.168.1.2")
+
+    response = client.get("/events?destination_ip=192.168.1.1", headers=_bearer(token))
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == str(matching.id)
+
+
+def test_invalid_source_ip_is_422(client):
+    token = _register_and_login(client)
+    response = client.get("/events?source_ip=not-an-ip", headers=_bearer(token))
+    assert response.status_code == 422
+
+
+def test_invalid_destination_ip_is_422(client):
+    token = _register_and_login(client)
+    response = client.get("/events?destination_ip=999.999.999.999", headers=_bearer(token))
+    assert response.status_code == 422
+
+
+def test_new_filters_combined_with_each_other(client, db_session):
+    token = _register_and_login(client)
+    matching = _make_event(db_session, hostname="WIN-7A3B", username="jdoe", source_ip="10.0.0.5")
+    _make_event(db_session, hostname="WIN-7A3B", username="asmith", source_ip="10.0.0.5")
+
+    response = client.get(
+        "/events", params={"hostname": "WIN-7A3B", "username": "jdoe", "source_ip": "10.0.0.5"}, headers=_bearer(token)
+    )
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == str(matching.id)
+
+
+def test_new_filters_combined_with_existing_event_type_filter(client, db_session):
+    token = _register_and_login(client)
+    matching = _make_event(db_session, event_type="authentication_failure", hostname="WIN-7A3B")
+    _make_event(db_session, event_type="process_creation", hostname="WIN-7A3B")
+    _make_event(db_session, event_type="authentication_failure", hostname="WIN-9C1D")
+
+    response = client.get(
+        "/events", params={"event_type": "authentication_failure", "hostname": "WIN-7A3B"}, headers=_bearer(token)
+    )
+    items = response.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == str(matching.id)
+
+
+def test_new_filters_omitted_preserves_prior_behavior(client, db_session):
+    """Every existing caller that never sends hostname/username/
+    source_ip/destination_ip must see every event regardless of what
+    those columns actually hold -- backward compatibility, not just "no
+    crash".
+    """
+    token = _register_and_login(client)
+    _make_event(db_session, hostname="WIN-7A3B", username="jdoe", source_ip="10.0.0.5")
+    _make_event(db_session, hostname=None, username=None, source_ip=None)
+
+    response = client.get("/events", headers=_bearer(token))
+    assert len(response.json()["items"]) == 2
+
+
+def test_hostname_filter_pagination(client, db_session):
+    token = _register_and_login(client)
+    for _ in range(5):
+        _make_event(db_session, hostname="WIN-7A3B")
+    _make_event(db_session, hostname="WIN-OTHER")
+
+    response = client.get("/events?hostname=WIN-7A3B&limit=2", headers=_bearer(token))
+    body = response.json()
+    assert len(body["items"]) == 2
+    assert body["limit"] == 2
+
+
 def test_combined_filters(client, db_session):
     token = _register_and_login(client)
     now = datetime.now(timezone.utc)

@@ -61,6 +61,10 @@ class SecurityEventRepository:
         source: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        hostname: str | None = None,
+        username: str | None = None,
+        source_ip: str | None = None,
+        destination_ip: str | None = None,
     ) -> list[SecurityEvent]:
         """Newest-first (event_timestamp DESC, id DESC tie-break —
         the same deterministic-ordering convention CopilotAuditRepository/
@@ -72,6 +76,16 @@ class SecurityEventRepository:
         was added for this milestone (see the final report's Index
         Analysis section) -- ordering and every filter here map onto an
         index that already existed before this method was written.
+
+        Step 12X: `hostname`/`username`/`source_ip`/`destination_ip` are
+        the same kind of optional equality filter as `event_type`/
+        `source` above -- each maps onto its own pre-existing index
+        (ix_security_events_hostname/_username/_source_ip/
+        _destination_ip, all present since this table's own original
+        migration, long before any query here used them). Exact-match
+        only, same as every other filter on this method -- no free-text/
+        substring/regex matching, and no new index or migration was
+        needed since these columns were already indexed.
 
         `limit` is capped at MAX_LIST_LIMIT so this can never become an
         unbounded query regardless of what a caller passes; validated
@@ -92,6 +106,14 @@ class SecurityEventRepository:
             stmt = stmt.where(SecurityEvent.event_timestamp >= since)
         if until is not None:
             stmt = stmt.where(SecurityEvent.event_timestamp <= until)
+        if hostname is not None:
+            stmt = stmt.where(SecurityEvent.hostname == hostname)
+        if username is not None:
+            stmt = stmt.where(SecurityEvent.username == username)
+        if source_ip is not None:
+            stmt = stmt.where(SecurityEvent.source_ip == source_ip)
+        if destination_ip is not None:
+            stmt = stmt.where(SecurityEvent.destination_ip == destination_ip)
         stmt = stmt.limit(limit).offset(offset)
 
         return list(self._db.scalars(stmt))

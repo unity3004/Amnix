@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import IPvAnyAddress
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import AuthenticatedUser, get_current_user
@@ -76,6 +77,10 @@ def list_events(
     source: str | None = Query(default=None),
     since: datetime | None = Query(default=None),
     until: datetime | None = Query(default=None),
+    hostname: str | None = Query(default=None),
+    username: str | None = Query(default=None),
+    source_ip: IPvAnyAddress | None = Query(default=None),
+    destination_ip: IPvAnyAddress | None = Query(default=None),
     current_user: AuthenticatedUser = Depends(get_current_user),
     service: SecurityEventService = Depends(get_security_event_service),
 ) -> SecurityEventListResponse:
@@ -92,13 +97,36 @@ def list_events(
     than being silently clamped. The same bounds are still enforced
     independently inside SecurityEventRepository (defense in depth,
     matching every other bounded-list repository in this codebase).
-    `event_type`/`source` are exact-match filters; `since`/`until` bound
-    `event_timestamp`. All five are optional and independent.
+    `event_type`/`source`/`hostname`/`username` are exact-match string
+    filters; `since`/`until` bound `event_timestamp`. All nine are
+    optional and independent — every existing caller that omits the new
+    four keeps its exact prior behavior unchanged.
+
+    Step 12X: `source_ip`/`destination_ip` are typed as `IPvAnyAddress`
+    (Pydantic validates the query string is a real IPv4/IPv6 address,
+    rejecting anything else with the same 422 shape as an invalid
+    `since`/`until`) — the identical validation SecurityEventCreate
+    already applies at ingestion. Converted to `str` before reaching the
+    service/repository so the comparison matches the same canonicalized
+    string form SecurityEventService.ingest() already stores (see that
+    method's own `str(data["source_ip"])` conversion) — never the raw,
+    un-normalized query string.
     """
     if since is not None and until is not None and until < since:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="'until' must not be before 'since'.")
 
-    events = service.list_recent(limit=limit, offset=offset, event_type=event_type, source=source, since=since, until=until)
+    events = service.list_recent(
+        limit=limit,
+        offset=offset,
+        event_type=event_type,
+        source=source,
+        since=since,
+        until=until,
+        hostname=hostname,
+        username=username,
+        source_ip=str(source_ip) if source_ip is not None else None,
+        destination_ip=str(destination_ip) if destination_ip is not None else None,
+    )
     return SecurityEventListResponse(
         items=[SecurityEventRead.model_validate(event) for event in events],
         limit=limit,

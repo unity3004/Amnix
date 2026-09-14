@@ -10,6 +10,7 @@ import { AlertDetailPage } from '@/pages/AlertDetailPage'
 import { InvestigationWorkspacePage } from '@/pages/InvestigationWorkspacePage'
 import { EventsPage } from '@/pages/EventsPage'
 import { EventDetailPage } from '@/pages/EventDetailPage'
+import { ThreatHuntingPage } from '@/pages/ThreatHuntingPage'
 import { InvestigationsPage } from '@/pages/InvestigationsPage'
 import { CopilotPage } from '@/pages/CopilotPage'
 import { RuleExplorerPage } from '@/pages/RuleExplorerPage'
@@ -52,6 +53,7 @@ export function App() {
                 <Route path="/alerts/:alertId/investigation" element={<InvestigationWorkspacePage />} />
                 <Route path="/events" element={<EventsPage />} />
                 <Route path="/events/:eventId" element={<EventDetailPage />} />
+                <Route path="/threat-hunting" element={<ThreatHuntingPage />} />
                 <Route path="/investigations" element={<InvestigationsPage />} />
                 <Route path="/copilot" element={<CopilotPage />} />
                 <Route path="/rules" element={<RuleExplorerPage />} />

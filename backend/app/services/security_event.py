@@ -36,13 +36,27 @@ class SecurityEventService:
         source: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
+        hostname: str | None = None,
+        username: str | None = None,
+        source_ip: str | None = None,
+        destination_ip: str | None = None,
     ) -> list[SecurityEvent]:
         """Thin passthrough to SecurityEventRepository.list_recent() —
-        Dashboard Data Foundation's GET /events. No business logic of
-        its own, matching how `get()` above is also a bare passthrough;
-        exists only so app.api.events never calls the repository layer
-        directly, the same convention every other route in AMNIX follows.
+        Dashboard Data Foundation's GET /events, now also Step 12X's
+        Threat Hunting workspace. No business logic of its own, matching
+        how `get()` above is also a bare passthrough; exists only so
+        app.api.events never calls the repository layer directly, the
+        same convention every other route in AMNIX follows.
         """
         return self._repository.list_recent(
-            limit=limit, offset=offset, event_type=event_type, source=source, since=since, until=until
+            limit=limit,
+            offset=offset,
+            event_type=event_type,
+            source=source,
+            since=since,
+            until=until,
+            hostname=hostname,
+            username=username,
+            source_ip=source_ip,
+            destination_ip=destination_ip,
         )
