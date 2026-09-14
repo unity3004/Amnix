@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, LayoutGrid, Pencil } from 'lucide-react'
+import { WorkflowBreadcrumb } from '@/components/layout/WorkflowBreadcrumb'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -83,6 +84,8 @@ export function CaseDetailPage() {
 
       {caseItem && (
         <>
+          <WorkflowBreadcrumb steps={[{ label: 'SOC Cases', to: '/cases' }, { label: 'Case' }]} />
+
           <Card className="p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">

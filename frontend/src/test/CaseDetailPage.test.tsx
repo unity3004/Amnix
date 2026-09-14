@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Route, Routes } from 'react-router-dom'
 import { CaseDetailPage } from '@/pages/CaseDetailPage'
@@ -404,5 +404,16 @@ describe('Step 12S: SOC Case Detail (real backend data)', () => {
     renderCaseDetail()
     await screen.findByText('Suspicious lateral movement')
     expect(document.body.textContent).not.toMatch(/bearer |access_token|refresh_token|password|api[_-]?key/i)
+  })
+})
+
+describe('Step 12Z: workflow breadcrumb continuity on Case Detail', () => {
+  it('shows a real, navigable SOC Cases / Case trail', async () => {
+    mockCaseFixtures(makeCase())
+    renderCaseDetail()
+
+    const nav = await screen.findByRole('navigation', { name: /workflow breadcrumb/i })
+    expect(within(nav).getByRole('link', { name: 'SOC Cases' })).toHaveAttribute('href', '/cases')
+    expect(within(nav).getByText('Case')).toHaveAttribute('aria-current', 'page')
   })
 })

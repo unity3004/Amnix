@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Route, Routes, useLocation } from 'react-router-dom'
 import { AlertDetailPage } from '@/pages/AlertDetailPage'
@@ -484,5 +484,44 @@ describe('Step 12V: authoritative Linked Cases (GET /alerts/{id}/cases)', () => 
 
     expect(await screen.findByText('Unique Linked Case Marker')).toBeInTheDocument()
     expect(screen.queryByText(/CASE-\d{4}/)).not.toBeInTheDocument()
+  })
+})
+
+describe('Step 12Z: workflow breadcrumb continuity on Alert Detail', () => {
+  it('shows Alerts / Alert when there is no case context', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
+    vi.spyOn(casesService, 'listCases').mockResolvedValue(caseResp([]))
+    vi.spyOn(alertsService, 'getAlertCases').mockResolvedValue(caseResp([]))
+    renderAlertDetail()
+
+    const nav = await screen.findByRole('navigation', { name: /workflow breadcrumb/i })
+    expect(within(nav).getByRole('link', { name: 'Alerts' })).toHaveAttribute('href', '/alerts')
+    expect(nav).not.toHaveTextContent(/Case/)
+  })
+
+  it('shows SOC Cases / Case / Alert, with a real link to the real case, via case-context query params', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
+    vi.spyOn(casesService, 'listCases').mockResolvedValue(caseResp([]))
+    vi.spyOn(alertsService, 'getAlertCases').mockResolvedValue(caseResp([]))
+    renderAlertDetail('/alerts/alert-triage-1?case=case-breadcrumb&caseNumber=99')
+
+    const nav = await screen.findByRole('navigation', { name: /workflow breadcrumb/i })
+    expect(within(nav).getByRole('link', { name: 'SOC Cases' })).toHaveAttribute('href', '/cases')
+    expect(within(nav).getByRole('link', { name: 'Case' })).toHaveAttribute('href', '/cases/case-breadcrumb')
+    // Never a second, unverified "Case #99" rendered as if it were a
+    // confirmed fact next to the real, authoritative Linked Cases panel.
+    expect(screen.queryByText('Case #99')).not.toBeInTheDocument()
+  })
+
+  it('never shows a "Create Case"/"Create Alert" affordance anywhere on this page', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
+    vi.spyOn(casesService, 'listCases').mockResolvedValue(caseResp([]))
+    vi.spyOn(alertsService, 'getAlertCases').mockResolvedValue(caseResp([]))
+    renderAlertDetail()
+
+    await screen.findByText('Brute force authentication detected')
+    expect(screen.queryByRole('button', { name: /create case/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /create alert/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /promote to incident/i })).not.toBeInTheDocument()
   })
 })

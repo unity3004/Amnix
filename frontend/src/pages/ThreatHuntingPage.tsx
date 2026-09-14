@@ -108,7 +108,14 @@ export function ThreatHuntingPage() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_380px]">
         <Card className="overflow-hidden">
           <HuntFilterPanel filters={filters} windowMinutes={windowMinutes} onApply={applyFilters} onClear={() => setSearchParams({})} />
-          <HuntContextBar filters={filters} windowMinutes={windowMinutes} eventCount={events.length} hasNextPage={hasNextPage} onRemoveFilter={removeFilter} />
+          <HuntContextBar
+            filters={filters}
+            windowMinutes={windowMinutes}
+            eventCount={events.length}
+            hasNextPage={hasNextPage}
+            focusedEvent={focusedEvent}
+            onRemoveFilter={removeFilter}
+          />
 
           {liveState === 'error' ? (
             <ErrorState title="Unable to run this hunt" onRetry={refresh} />

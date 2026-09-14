@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { EventEvidenceFields } from '@/features/events/components/EventEvidenceFields'
 import { LinkedAlertsPanel } from '@/features/events/components/LinkedAlertsPanel'
+import { useEventAlerts } from '@/features/events/useEventAlerts'
 import { PIVOT_FIELDS, type HuntFilters } from '../types'
 import type { SecurityEventRead } from '@/types/api'
 
@@ -28,6 +29,15 @@ import type { SecurityEventRead } from '@/types/api'
  * only mounts once this panel actually renders a selected event, so
  * selecting a row fetches it exactly once; nothing in the hunt results
  * table itself ever triggers this request (no N+1 across rows).
+ *
+ * Step 12Z: this panel also reads useEventAlerts(event.id) directly --
+ * the EXACT SAME query key LinkedAlertsPanel uses internally, so React
+ * Query dedupes both into the one request above, never a second one
+ * (the identical, already-proven pattern CaseDetailPage/CaseAlertsPanel
+ * use for useCaseAlerts -- see that page's own docstring). This is only
+ * so the honest "no alerts yet" guidance below can render once the real
+ * answer is known, without duplicating LinkedAlertsPanel's own fetch or
+ * its own empty-state copy.
  */
 export function EventInspectorPanel({
   event,
@@ -36,6 +46,9 @@ export function EventInspectorPanel({
   event: SecurityEventRead | undefined
   onPivot: (filterKey: keyof HuntFilters, value: string) => void
 }) {
+  const linkedAlerts = useEventAlerts(event?.id)
+  const hasConfirmedZeroLinkedAlerts = linkedAlerts.isSuccess && linkedAlerts.data.items.length === 0
+
   return (
     <div className="rounded-lg border border-border bg-surface">
       <CardHeader title="Event Inspector" subtitle={event ? 'Selected from the current hunt results' : 'Select an event to inspect it'} />
@@ -74,6 +87,13 @@ export function EventInspectorPanel({
           <div className="-mx-5 border-t border-border">
             <LinkedAlertsPanel eventId={event.id} />
           </div>
+
+          {hasConfirmedZeroLinkedAlerts && (
+            <p className="-mt-2 text-xs text-fg-subtle">
+              No alerts are currently linked to this event -- that does not mean it was reviewed and found benign.
+              Continue hunting using the pivots above, or widen the current filters.
+            </p>
+          )}
 
           <Link to={`/events/${event.id}`} className="inline-flex items-center gap-1.5 text-xs font-medium text-accent-strong hover:text-accent">
             Open Full Event Detail

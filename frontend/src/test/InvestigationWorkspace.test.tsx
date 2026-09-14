@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Route, Routes } from 'react-router-dom'
 import { InvestigationWorkspacePage } from '@/pages/InvestigationWorkspacePage'
@@ -559,5 +559,43 @@ describe('Copilot evidence-centered UX (Step 12F)', () => {
     const starter = screen.getByRole('button', { name: 'Why might this be benign?' })
     starter.focus()
     expect(starter).toHaveFocus()
+  })
+})
+
+describe('Step 12Z: workflow breadcrumb continuity', () => {
+  it('shows Alerts / Alert / Investigation when there is no case context', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
+    vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(makeInvestigation())
+    renderWorkspace()
+
+    const nav = await screen.findByRole('navigation', { name: /workflow breadcrumb/i })
+    expect(nav).toHaveTextContent(/Alerts/)
+    expect(nav).toHaveTextContent(/Alert/)
+    expect(nav).toHaveTextContent(/Investigation/)
+    // No Case level fabricated when nothing in the URL says one exists.
+    expect(nav).not.toHaveTextContent(/Case/)
+    expect(within(nav).getByRole('link', { name: 'Alerts' })).toHaveAttribute('href', '/alerts')
+  })
+
+  it('shows SOC Cases / Case / Alert / Investigation, with a real link, when arriving via case-context query params', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
+    vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(makeInvestigation())
+    renderWorkspace('/alerts/alert-ws-1/investigation?case=case-77&caseNumber=77')
+
+    const nav = await screen.findByRole('navigation', { name: /workflow breadcrumb/i })
+    expect(nav).toHaveTextContent(/SOC Cases/)
+    expect(nav).toHaveTextContent(/Case/)
+    expect(within(nav).getByRole('link', { name: 'Case' })).toHaveAttribute('href', '/cases/case-77')
+    // The current step ("Investigation") is not itself a link.
+    expect(within(nav).queryByRole('link', { name: 'Investigation' })).not.toBeInTheDocument()
+  })
+
+  it('never fetches a Case or triggers a Case mutation merely by rendering the breadcrumb', async () => {
+    vi.spyOn(alertsService, 'getAlert').mockResolvedValue(makeAlert())
+    vi.spyOn(alertsService, 'getAlertInvestigation').mockResolvedValue(makeInvestigation())
+    renderWorkspace('/alerts/alert-ws-1/investigation?case=case-77&caseNumber=77')
+
+    await screen.findByRole('navigation', { name: /workflow breadcrumb/i })
+    expect(document.body.textContent).not.toMatch(/create case|new case/i)
   })
 })

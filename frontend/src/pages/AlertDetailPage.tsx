@@ -1,5 +1,6 @@
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, ArrowRight, FileSearch, Bot } from 'lucide-react'
+import { WorkflowBreadcrumb, type BreadcrumbStep } from '@/components/layout/WorkflowBreadcrumb'
 import { Card, CardHeader } from '@/components/ui/Card'
 import { SeverityBadge, Badge } from '@/components/ui/Badge'
 import { ErrorState } from '@/components/ui/ErrorState'
@@ -64,6 +65,25 @@ export function AlertDetailPage() {
   const investigationHref = alert
     ? `/alerts/${alert.id}/investigation${caseContext ? buildCaseContextQuery(caseContext) : ''}`
     : ''
+  // Step 12Z §12: a real workflow-position trail -- a "Case" level only
+  // when Step 12U's own navigation context says that's genuinely where
+  // the analyst came from, never fabricated for an alert with no such
+  // context. Deliberately generic ("Case", not "Case #N"): the specific
+  // number already has one clear, unambiguous home -- the "Back to Case
+  // #N" button above -- and must never be echoed a second time next to
+  // the AUTHORITATIVE Linked Cases panel below, where a stray "Case #N"
+  // could be misread as confirmed membership instead of "where you came
+  // from" (see that panel's own docstring, and the Step 12U test proving
+  // the two must never be conflated).
+  const breadcrumbSteps: BreadcrumbStep[] = alert
+    ? caseContext
+      ? [
+          { label: 'SOC Cases', to: '/cases' },
+          { label: 'Case', to: `/cases/${caseContext.caseId}` },
+          { label: 'Alert' },
+        ]
+      : [{ label: 'Alerts', to: '/alerts' }, { label: 'Alert' }]
+    : []
 
   return (
     <div className="mx-auto max-w-[1000px] px-6 py-6">
@@ -92,6 +112,8 @@ export function AlertDetailPage() {
 
       {alert && (
         <>
+          <WorkflowBreadcrumb steps={breadcrumbSteps} />
+
           {/* REAL BACKEND DATA -- every field below is GET /alerts/{id} verbatim. */}
           <Card className="p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">

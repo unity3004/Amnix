@@ -1,5 +1,6 @@
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
+import { WorkflowBreadcrumb } from '@/components/layout/WorkflowBreadcrumb'
 import { Card } from '@/components/ui/Card'
 import { ErrorState } from '@/components/ui/ErrorState'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -37,23 +38,25 @@ export function EventDetailPage() {
       )}
 
       {event && (
-        <Card className="p-6">
-          {/* REAL BACKEND DATA -- every field below is GET /events/{id} verbatim. */}
-          <p className="font-mono text-sm font-semibold text-fg">{event.event_type}</p>
-          <p className="mt-1 text-xs text-fg-subtle">{new Date(event.event_timestamp).toLocaleString()}</p>
+        <>
+          <WorkflowBreadcrumb steps={[{ label: 'Events', to: '/events' }, { label: 'Event' }]} />
 
-          <div className="mt-6 border-t border-border pt-4">
-            <EventEvidenceFields event={event} />
-          </div>
-        </Card>
-      )}
+          <Card className="p-6">
+            {/* REAL BACKEND DATA -- every field below is GET /events/{id} verbatim. */}
+            <p className="font-mono text-sm font-semibold text-fg">{event.event_type}</p>
+            <p className="mt-1 text-xs text-fg-subtle">{new Date(event.event_timestamp).toLocaleString()}</p>
 
-      {/* ---- Linked Alerts (Step 12Y): the AUTHORITATIVE SecurityEvent
-       * -> Alert relationship, GET /events/{id}/alerts. ---- */}
-      {event && (
-        <Card className="mt-4 overflow-hidden">
-          <LinkedAlertsPanel eventId={event.id} />
-        </Card>
+            <div className="mt-6 border-t border-border pt-4">
+              <EventEvidenceFields event={event} />
+            </div>
+          </Card>
+
+          {/* ---- Linked Alerts (Step 12Y): the AUTHORITATIVE SecurityEvent
+           * -> Alert relationship, GET /events/{id}/alerts. ---- */}
+          <Card className="mt-4 overflow-hidden">
+            <LinkedAlertsPanel eventId={event.id} />
+          </Card>
+        </>
       )}
     </div>
   )

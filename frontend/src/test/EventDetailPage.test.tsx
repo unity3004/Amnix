@@ -1,10 +1,11 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Route, Routes } from 'react-router-dom'
 import { EventDetailPage } from '@/pages/EventDetailPage'
 import { renderWithProviders } from './utils'
 import * as eventsService from '@/services/eventsService'
+import * as alertsService from '@/services/alertsService'
 import { ApiError } from '@/services/httpClient'
 import type { AlertListResponse, AlertRead, SecurityEventRead } from '@/types/api'
 
@@ -53,6 +54,8 @@ function renderEventDetail(route = '/events/event-detail-1') {
     <Routes>
       <Route path="/events/:eventId" element={<EventDetailPage />} />
       <Route path="/alerts/:alertId" element={<div>ALERT DETAIL MARKER</div>} />
+      <Route path="/alerts/:alertId/investigation" element={<div>INVESTIGATION WORKSPACE MARKER</div>} />
+      <Route path="/events" element={<div>EVENTS LIST MARKER</div>} />
     </Routes>,
     { route },
   )
@@ -118,7 +121,7 @@ describe('Step 12Y: authoritative Linked Alerts (GET /events/{id}/alerts)', () =
     vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([makeAlert({ id: 'alert-999' })]))
     renderEventDetail()
 
-    const link = await screen.findByRole('link', { name: /brute force authentication detected/i })
+    const link = await screen.findByRole('link', { name: /open alert/i })
     expect(link).toHaveAttribute('href', '/alerts/alert-999')
     await userEvent.setup().click(link)
     expect(await screen.findByText('ALERT DETAIL MARKER')).toBeInTheDocument()
@@ -141,5 +144,43 @@ describe('Step 12Y: authoritative Linked Alerts (GET /events/{id}/alerts)', () =
 
     await screen.findByText('Linked Alerts (1)')
     expect(document.body.textContent).not.toMatch(/threat score|risk score|compromise probability|attacker likelihood/i)
+  })
+})
+
+describe('Step 12Z: Event -> Alert -> Investigation workflow continuity', () => {
+  it('shows a real, navigable Events / Event breadcrumb', async () => {
+    vi.spyOn(eventsService, 'getEvent').mockResolvedValue(makeEvent())
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
+    renderEventDetail()
+
+    const nav = await screen.findByRole('navigation', { name: /workflow breadcrumb/i })
+    expect(within(nav).getByRole('link', { name: 'Events' })).toHaveAttribute('href', '/events')
+    expect(within(nav).getByText('Event')).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('navigates straight to the real Investigation Workspace via the linked alert\'s "Investigate" action', async () => {
+    vi.spyOn(eventsService, 'getEvent').mockResolvedValue(makeEvent())
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([makeAlert({ id: 'alert-inv-1' })]))
+    const investigationSpy = vi.spyOn(alertsService, 'getAlertInvestigation')
+    renderEventDetail()
+
+    const link = await screen.findByRole('link', { name: /investigate/i })
+    expect(link).toHaveAttribute('href', '/alerts/alert-inv-1/investigation')
+    // Rendering the linked-alert row must never itself fetch Investigation.
+    expect(investigationSpy).not.toHaveBeenCalled()
+
+    await userEvent.setup().click(link)
+    expect(await screen.findByText('INVESTIGATION WORKSPACE MARKER')).toBeInTheDocument()
+  })
+
+  it('never shows a "Create Case"/"Create Alert" affordance for an event with no linked alerts', async () => {
+    vi.spyOn(eventsService, 'getEvent').mockResolvedValue(makeEvent())
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
+    renderEventDetail()
+
+    await screen.findByText('No alerts are linked to this event.')
+    expect(screen.queryByRole('button', { name: /create case/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /create alert/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /promote to incident/i })).not.toBeInTheDocument()
   })
 })

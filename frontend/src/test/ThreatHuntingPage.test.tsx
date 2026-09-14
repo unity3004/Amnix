@@ -328,3 +328,59 @@ describe('Step 12Y: Threat Hunting Linked Alerts integration (GET /events/{id}/a
     expect(alertsSpy).toHaveBeenNthCalledWith(2, 'event-b')
   })
 })
+
+describe('Step 12Z: Current Hunt context (selected event + real linked-alert count)', () => {
+  it('shows no selected-event context, and no linked-alert count, until an event is actually selected', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent()]))
+    renderHunting()
+
+    await screen.findByText('Page 1')
+    expect(screen.queryByText(/Selected:/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Linked alerts:/)).not.toBeInTheDocument()
+  })
+
+  it('names the real selected event and its real linked-alert count once selected -- deduped to the one shared request', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ id: 'event-ctx', event_type: 'powershell_execution' })]))
+    const alertsSpy = vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([makeAlert(), makeAlert()]))
+    renderHunting()
+
+    await userEvent.setup().click(await screen.findByText('powershell_execution'))
+
+    await waitFor(() => expect(screen.getByText(/Linked alerts: 2/)).toBeInTheDocument())
+    expect(screen.getAllByText('powershell_execution').length).toBeGreaterThan(0)
+    // Three components (HuntContextBar, EventInspectorPanel, LinkedAlertsPanel)
+    // all read this same event's linked alerts -- still exactly one request.
+    expect(alertsSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('never implies the current hunt has been saved', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([]))
+    renderHunting()
+
+    expect(await screen.findByText(/\(not saved\)/)).toBeInTheDocument()
+  })
+})
+
+describe('Step 12Z: honest empty-alert exploratory guidance', () => {
+  it('offers to continue hunting -- never a fake "Create Alert"/"Promote to Incident" action -- when the selected event has no linked alerts', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ id: 'event-empty' })]))
+    vi.spyOn(eventsService, 'getEventAlerts').mockResolvedValue(alertResp([]))
+    renderHunting()
+
+    await userEvent.setup().click(await screen.findByText('authentication_failure'))
+
+    expect(await screen.findByText(/continue hunting using the pivots above/i)).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/no threat|no compromise|no detection/i)
+    expect(screen.queryByRole('button', { name: /create alert/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /promote to incident/i })).not.toBeInTheDocument()
+  })
+
+  it('does not show the "continue hunting" guidance while a linked-alert lookup is still pending', async () => {
+    vi.spyOn(eventsService, 'listEvents').mockResolvedValue(resp([makeEvent({ id: 'event-pending' })]))
+    vi.spyOn(eventsService, 'getEventAlerts').mockReturnValue(new Promise(() => {}))
+    renderHunting()
+
+    await userEvent.setup().click(await screen.findByText('authentication_failure'))
+    expect(screen.queryByText(/continue hunting using the pivots above/i)).not.toBeInTheDocument()
+  })
+})

@@ -1,7 +1,8 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { SeverityBadge, Badge } from '@/components/ui/Badge'
-import type { CaseNavigationContext } from '@/features/cases/caseNavigationContext'
+import { WorkflowBreadcrumb, type BreadcrumbStep } from '@/components/layout/WorkflowBreadcrumb'
+import { buildCaseContextQuery, type CaseNavigationContext } from '@/features/cases/caseNavigationContext'
 import type { AlertRead } from '@/types/api'
 
 const STATUS_TONE: Record<AlertRead['status'], 'accent' | 'neutral' | 'success' | 'warning'> = {
@@ -27,6 +28,22 @@ export function InvestigationHeader({
   caseContext: CaseNavigationContext | null
 }) {
   const navigate = useNavigate()
+  const alertHref = `/alerts/${alert.id}${caseContext ? buildCaseContextQuery(caseContext) : ''}`
+  // Step 12Z §12: same real-levels-only rule as AlertDetailPage's own
+  // breadcrumb -- "Case #N" only when Step 12U's context says that's
+  // genuinely where the analyst came from.
+  const breadcrumbSteps: BreadcrumbStep[] = caseContext
+    ? [
+        { label: 'SOC Cases', to: '/cases' },
+        { label: 'Case', to: `/cases/${caseContext.caseId}` },
+        { label: 'Alert', to: alertHref },
+        { label: 'Investigation' },
+      ]
+    : [
+        { label: 'Alerts', to: '/alerts' },
+        { label: 'Alert', to: alertHref },
+        { label: 'Investigation' },
+      ]
 
   return (
     <div className="border-b border-border pb-4">
@@ -38,6 +55,8 @@ export function InvestigationHeader({
         <ArrowLeft className="size-3.5" strokeWidth={2} aria-hidden="true" />
         {caseContext ? `Back to Case #${caseContext.caseNumber}` : 'Back to Alerts'}
       </button>
+
+      <WorkflowBreadcrumb steps={breadcrumbSteps} />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
