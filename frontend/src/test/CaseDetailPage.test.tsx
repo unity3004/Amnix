@@ -417,3 +417,269 @@ describe('Step 12Z: workflow breadcrumb continuity on Case Detail', () => {
     expect(within(nav).getByText('Case')).toHaveAttribute('aria-current', 'page')
   })
 })
+
+describe('Step 13A: Case Evidence Summary', () => {
+  it('shows real, honest counts derived from the linked alerts -- never "Total"/"Complete"/"Confirmed" Evidence', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [
+        makeAlert({ id: 'alert-1', evidence: { failure_count: 7 }, source_event_ids: ['evt-1', 'evt-2'] }),
+        makeAlert({ id: 'alert-2', evidence: {}, source_event_ids: ['evt-2', 'evt-3'] }),
+        makeAlert({ id: 'alert-3', evidence: {}, source_event_ids: [] }),
+      ],
+      limit: 3,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    renderCaseDetail()
+
+    await screen.findByText('Case Evidence Summary')
+    // Three currently linked alerts -- restated honestly in the panel's
+    // own subtitle, never duplicated as a fourth "Linked Alerts" field
+    // (the case header above already states that count).
+    expect(screen.getByText(/3 currently linked alerts/)).toBeInTheDocument()
+
+    const structuredEvidenceValue = screen.getByText('Alerts with Structured Evidence').nextElementSibling
+    const supportingEventsValue = screen.getByText('Alerts with Supporting Events').nextElementSibling
+    // Distinct union across alerts (evt-1, evt-2, evt-3) -- evt-2 shared
+    // by two alerts must not be double-counted.
+    const eventsReachableValue = screen.getByText('Security Events Reachable').nextElementSibling
+
+    expect(structuredEvidenceValue).toHaveTextContent('1')
+    expect(supportingEventsValue).toHaveTextContent('2')
+    expect(eventsReachableValue).toHaveTextContent('3')
+
+    expect(document.body.textContent).not.toMatch(/total evidence|complete evidence|confirmed evidence|\d+%/i)
+  })
+
+  it('shows all-zero counts, never an error, for a case with no linked alerts', async () => {
+    mockCaseFixtures(makeCase())
+    renderCaseDetail()
+
+    await screen.findByText(/0 currently linked alerts/)
+    const zeros = screen.getAllByText('0')
+    expect(zeros.length).toBeGreaterThan(0)
+  })
+
+  it('shows the rule-based MITRE mapping for each linked alert, distinct from any AI/Copilot analysis', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ id: 'alert-1', title: 'Brute force detected', rule_id: 'brute_force_authentication' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    renderCaseDetail()
+
+    expect(await screen.findByText(/MITRE: T1110/)).toBeInTheDocument()
+  })
+})
+
+describe('Step 13A: Analyst Notes -- real author identity', () => {
+  it('shows "You" for a note authored by the current analyst, and the real UUID for another author', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue(emptyAlerts())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue({
+      items: [
+        { id: 'note-1', case_id: 'case-1', author_id: ANALYST.id, body: 'My own note.', created_at: new Date().toISOString() },
+        { id: 'note-2', case_id: 'case-1', author_id: 'other-analyst-99', body: 'Someone else wrote this.', created_at: new Date().toISOString() },
+      ],
+      limit: 50,
+      offset: 0,
+    })
+    renderCaseDetail()
+
+    expect(await screen.findByText('My own note.')).toBeInTheDocument()
+    expect(screen.getByText('Someone else wrote this.')).toBeInTheDocument()
+    expect(screen.getByText('You')).toBeInTheDocument()
+    expect(screen.getByText('other-analyst-99')).toBeInTheDocument()
+  })
+
+  it('never sends a client-supplied author -- only the note body is posted, server resolves the author', async () => {
+    mockCaseFixtures(makeCase())
+    const noteMock = vi.spyOn(casesService, 'createCaseNote').mockResolvedValue({
+      id: 'note-1',
+      case_id: 'case-1',
+      author_id: ANALYST.id,
+      body: 'Real observation.',
+      created_at: new Date().toISOString(),
+    })
+    renderCaseDetail()
+
+    await screen.findByText('No notes have been added to this case yet.')
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Add a Note'), 'Real observation.')
+    await user.click(screen.getByRole('button', { name: /add note/i }))
+
+    await waitFor(() => expect(noteMock).toHaveBeenCalledWith('case-1', 'Real observation.'))
+    // Exactly two positional args (caseId, body) -- no third "author" argument exists on this call.
+    expect(noteMock.mock.calls[0]).toHaveLength(2)
+  })
+
+  it('rejects a blank note before ever calling the backend', async () => {
+    mockCaseFixtures(makeCase())
+    const noteMock = vi.spyOn(casesService, 'createCaseNote')
+    renderCaseDetail()
+
+    await screen.findByText('No notes have been added to this case yet.')
+    await userEvent.setup().type(screen.getByLabelText('Add a Note'), '   ')
+    expect(screen.getByRole('button', { name: /add note/i })).toBeDisabled()
+    expect(noteMock).not.toHaveBeenCalled()
+  })
+
+  it('adding a note invalidates only this case\'s own notes query, never an unrelated case or resource', async () => {
+    mockCaseFixtures(makeCase())
+    vi.spyOn(casesService, 'createCaseNote').mockResolvedValue({
+      id: 'note-1',
+      case_id: 'case-1',
+      author_id: ANALYST.id,
+      body: 'Escalated.',
+      created_at: new Date().toISOString(),
+    })
+    const notesSpy = vi.spyOn(casesService, 'listCaseNotes')
+    renderCaseDetail()
+
+    await screen.findByText('No notes have been added to this case yet.')
+    const callsBefore = notesSpy.mock.calls.length
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Add a Note'), 'Escalated.')
+    await user.click(screen.getByRole('button', { name: /add note/i }))
+
+    await waitFor(() => expect(notesSpy.mock.calls.length).toBeGreaterThan(callsBefore))
+    // Every refetch triggered by the invalidation is still scoped to case-1.
+    for (const call of notesSpy.mock.calls) expect(call[0]).toBe('case-1')
+  })
+})
+
+describe('Step 13A: Closure Readiness (deterministic checklist, never a score)', () => {
+  it('shows an incomplete checklist for a freshly opened case with nothing documented yet', async () => {
+    mockCaseFixtures(makeCase({ status: 'OPEN' }))
+    renderCaseDetail()
+
+    await screen.findByText('Closure Readiness')
+    expect(screen.getByText('Has at least one linked alert')).toBeInTheDocument()
+    expect(screen.getByText('Has an evidence-bearing alert')).toBeInTheDocument()
+    expect(screen.getByText('Has a MITRE-mapped alert')).toBeInTheDocument()
+    expect(screen.getByText('Has analyst notes')).toBeInTheDocument()
+    expect(screen.getAllByText('Not yet documented').length).toBeGreaterThanOrEqual(4)
+    // No closure-reason item for a case that isn't CLOSED.
+    expect(screen.queryByText('Closure reason present')).not.toBeInTheDocument()
+  })
+
+  it('marks items Complete as real documentation accumulates -- never a percentage or numeric score', async () => {
+    const caseItem = makeCase({ status: 'OPEN' })
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ rule_id: 'brute_force_authentication', evidence: { failure_count: 3 } })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue({
+      items: [{ id: 'note-1', case_id: 'case-1', author_id: ANALYST.id, body: 'Documented.', created_at: new Date().toISOString() }],
+      limit: 50,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    renderCaseDetail()
+
+    await screen.findByText('Closure Readiness')
+    expect(screen.getAllByText('Complete').length).toBe(4)
+    expect(document.body.textContent).not.toMatch(/\d+%/)
+  })
+
+  it('adds a "Closure reason present" item, reflecting real backend state, only once the case is CLOSED', async () => {
+    mockCaseFixtures(makeCase({ status: 'CLOSED', closure_reason: 'Confirmed false positive.' }))
+    renderCaseDetail()
+
+    await screen.findByText('Closure Readiness')
+    expect(screen.getByText('Closure reason present')).toBeInTheDocument()
+  })
+
+  it('never implies a completed checklist proves the incident is benign or malicious', async () => {
+    mockCaseFixtures(makeCase())
+    renderCaseDetail()
+
+    await screen.findByText('Closure Readiness')
+    expect(document.body.textContent).not.toMatch(/\bbenign\b|\bmalicious\b|confirmed threat|no threat detected/i)
+  })
+})
+
+describe('Step 13A: performance -- no N+1, no automatic Investigation/Copilot fetch', () => {
+  it('alerts/notes fetch counts stay small and case-scoped despite multiple panels reading the same data -- never one call per alert/note/panel', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    const alertsSpy = vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ rule_id: 'brute_force_authentication' })],
+      limit: 1,
+      offset: 0,
+    })
+    const notesSpy = vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    renderCaseDetail()
+
+    await screen.findByText('Closure Readiness')
+    await screen.findByText('Case Evidence Summary')
+
+    // CaseDetailPage, CaseEvidenceSummaryPanel, CaseClosureReadinessPanel,
+    // and CaseAlertsPanel all read the same linked-alert query key; React
+    // Query's shared cache means this stays a small, bounded number (at
+    // most one fetch per distinct mount time, never one per consuming
+    // component or per alert/note row) -- never the unbounded, scaling
+    // call count real N+1 would produce.
+    await waitFor(() => {
+      expect(alertsSpy.mock.calls.length).toBeGreaterThan(0)
+      expect(alertsSpy.mock.calls.length).toBeLessThanOrEqual(2)
+      expect(notesSpy.mock.calls.length).toBeGreaterThan(0)
+      expect(notesSpy.mock.calls.length).toBeLessThanOrEqual(2)
+    })
+    for (const call of alertsSpy.mock.calls) expect(call[0]).toBe('case-1')
+    for (const call of notesSpy.mock.calls) expect(call[0]).toBe('case-1')
+  })
+
+  it('never fetches Investigation or Copilot data merely from rendering Case Detail', async () => {
+    const caseItem = makeCase()
+    vi.spyOn(casesService, 'getCase').mockResolvedValue(caseItem)
+    vi.spyOn(casesService, 'listCaseAlerts').mockResolvedValue({
+      items: [makeAlert({ rule_id: 'brute_force_authentication' })],
+      limit: 1,
+      offset: 0,
+    })
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+    const investigationSpy = vi.spyOn(alertsService, 'getAlertInvestigation')
+    const copilotSpy = vi.spyOn(alertsService, 'askCopilot')
+    renderCaseDetail()
+
+    await screen.findByText('Closure Readiness')
+    expect(investigationSpy).not.toHaveBeenCalled()
+    expect(copilotSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('Step 13A: cross-case isolation', () => {
+  it('never mixes one case\'s notes/alerts into another case\'s view', async () => {
+    vi.spyOn(casesService, 'getCase').mockImplementation((id) =>
+      Promise.resolve(makeCase({ id, case_number: id === 'case-1' ? 1 : 2, title: id === 'case-1' ? 'Case One' : 'Case Two' })),
+    )
+    vi.spyOn(casesService, 'listCaseAlerts').mockImplementation((id) =>
+      Promise.resolve({ items: [makeAlert({ id: `${id}-alert`, title: `${id} exclusive alert` })], limit: 1, offset: 0 }),
+    )
+    vi.spyOn(casesService, 'listCaseNotes').mockResolvedValue(emptyNotes())
+    vi.spyOn(casesService, 'listCaseAudit').mockResolvedValue(emptyAudit())
+
+    const first = renderCaseDetail('/cases/case-1')
+    expect(await screen.findByText('case-1 exclusive alert')).toBeInTheDocument()
+    expect(screen.queryByText('case-2 exclusive alert')).not.toBeInTheDocument()
+    first.unmount()
+
+    renderCaseDetail('/cases/case-2')
+    expect(await screen.findByText('case-2 exclusive alert')).toBeInTheDocument()
+    expect(screen.queryByText('case-1 exclusive alert')).not.toBeInTheDocument()
+  })
+})

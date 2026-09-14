@@ -12,6 +12,7 @@ import { linkCaseAlert, unlinkCaseAlert } from '@/services/casesService'
 import { useCaseAlerts } from '../useCaseAlerts'
 import { buildCaseContextQuery } from '../caseNavigationContext'
 import { getRuleDefinition } from '@/features/rules/ruleRegistry'
+import { getMitreTechniquesForRule } from '@/features/dashboard/mitreRegistry'
 import type { AlertRead } from '@/types/api'
 
 const STATUS_TONE: Record<AlertRead['status'], 'accent' | 'neutral' | 'success' | 'warning'> = {
@@ -129,6 +130,10 @@ export function CaseAlertsPanel({ caseId, caseNumber }: { caseId: string; caseNu
             const rule = getRuleDefinition(alert.rule_id)
             const hasEvidence = Object.keys(alert.evidence).length > 0
             const eventCount = alert.source_event_ids.length
+            // Step 13A §12: the same authoritative rule -> technique
+            // registry lookup AlertRow already uses, reused verbatim --
+            // never a CaseTechnique record, never an AI/Copilot inference.
+            const techniques = getMitreTechniquesForRule(alert.rule_id)
             return (
               <li key={alert.id} className="flex flex-col gap-2 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <Link to={`/alerts/${alert.id}${caseContextQuery}`} className="min-w-0 flex-1">
@@ -154,6 +159,9 @@ export function CaseAlertsPanel({ caseId, caseNumber }: { caseId: string; caseNu
                       {eventCount} event{eventCount === 1 ? '' : 's'}
                     </span>
                     <span>{hasEvidence ? 'Evidence available' : 'No structured evidence'}</span>
+                    <span title="Rule-based MITRE mapping from the authoritative rule registry -- not an AI/Copilot inference">
+                      {techniques.length > 0 ? `MITRE: ${techniques.map((t) => t.techniqueId).join(', ')}` : 'No MITRE mapping'}
+                    </span>
                   </p>
                 </Link>
                 <div className="flex shrink-0 items-center gap-2">

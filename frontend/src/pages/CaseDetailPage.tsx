@@ -10,10 +10,13 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { useAuth } from '@/features/auth/useAuth'
 import { useCaseDetail } from '@/features/cases/useCaseDetail'
 import { useCaseAlerts } from '@/features/cases/useCaseAlerts'
+import { useCaseNotes } from '@/features/cases/useCaseNotes'
 import { CaseEditPanel } from '@/features/cases/components/CaseEditPanel'
 import { CaseStatusPanel } from '@/features/cases/components/CaseStatusPanel'
 import { CaseOwnerPanel } from '@/features/cases/components/CaseOwnerPanel'
 import { CaseAlertsPanel } from '@/features/cases/components/CaseAlertsPanel'
+import { CaseEvidenceSummaryPanel } from '@/features/cases/components/CaseEvidenceSummaryPanel'
+import { CaseClosureReadinessPanel } from '@/features/cases/components/CaseClosureReadinessPanel'
 import { CaseNotesPanel } from '@/features/cases/components/CaseNotesPanel'
 import { CaseAuditPanel } from '@/features/cases/components/CaseAuditPanel'
 import { CaseWorkflowGuidance } from '@/features/cases/components/CaseWorkflowGuidance'
@@ -55,6 +58,12 @@ export function CaseDetailPage() {
   // is only here so the summary strip can show a REAL linked-alert
   // count instead of inventing one.
   const { data: alertsData } = useCaseAlerts(caseId)
+  // Step 13A: same dedup precedent as alertsData above -- shares its
+  // cache/network request with CaseNotesPanel's own identical
+  // useCaseNotes(caseId) call below (same queryKey -> one GET
+  // /cases/{id}/notes, not two). Only here so Closure Readiness can
+  // read a REAL notes count without a separate fetch.
+  const { data: notesData } = useCaseNotes(caseId)
   const [isEditing, setIsEditing] = useState(false)
 
   return (
@@ -164,7 +173,19 @@ export function CaseDetailPage() {
           </Card>
 
           <Card className="mt-4 overflow-hidden">
+            <CaseClosureReadinessPanel caseItem={caseItem} alerts={alertsData?.items ?? []} notes={notesData?.items ?? []} />
+          </Card>
+
+          <Card className="mt-4 overflow-hidden">
             <CaseOwnerPanel caseItem={caseItem} />
+          </Card>
+
+          {/* ---- Case Evidence (Step 13A): CASE -> LINKED ALERTS ->
+           * SECURITY EVENTS -> INVESTIGATION FINDINGS. The summary counts
+           * and the detailed alert list below both read the exact same
+           * GET /cases/{id}/alerts response -- one request, two views. ---- */}
+          <Card className="mt-4 overflow-hidden">
+            <CaseEvidenceSummaryPanel alerts={alertsData?.items ?? []} />
           </Card>
 
           <Card className="mt-4 overflow-hidden">
