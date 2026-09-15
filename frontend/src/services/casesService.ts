@@ -3,6 +3,8 @@ import type {
   AlertListResponse,
   AlertRead,
   CaseAuditListResponse,
+  CaseCopilotQuestionRequest,
+  CaseCopilotResponse,
   CaseCreate,
   CaseListResponse,
   CaseNoteListResponse,
@@ -11,6 +13,7 @@ import type {
   CaseRead,
   CaseStatusUpdate,
   CaseUpdate,
+  CopilotAuditListResponse,
   ListCasesParams,
 } from '@/types/api'
 
@@ -93,4 +96,23 @@ export function listCaseNotes(
 
 export function createCaseNote(caseId: string, body: string): Promise<CaseNoteResponse> {
   return apiRequest<CaseNoteResponse>(`/cases/${caseId}/notes`, { method: 'POST', body: { body }, auth: true })
+}
+
+/** POST /cases/{id}/copilot (Step 13D) -- explicit, analyst-triggered
+ * "Generate Investigation Brief" action only. Never called on page load
+ * or polled; see useCaseCopilot, the only caller.
+ */
+export function askCaseCopilot(caseId: string, payload: CaseCopilotQuestionRequest): Promise<CaseCopilotResponse> {
+  return apiRequest<CaseCopilotResponse>(`/cases/${caseId}/copilot`, { method: 'POST', body: payload, auth: true })
+}
+
+export function getCaseCopilotAudits(
+  caseId: string,
+  params: { limit?: number; offset?: number } = {},
+): Promise<CopilotAuditListResponse> {
+  const query = new URLSearchParams()
+  if (params.limit !== undefined) query.set('limit', String(params.limit))
+  if (params.offset !== undefined) query.set('offset', String(params.offset))
+  const suffix = query.toString() ? `?${query.toString()}` : ''
+  return apiRequest<CopilotAuditListResponse>(`/cases/${caseId}/copilot/audits${suffix}`, { auth: true })
 }

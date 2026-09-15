@@ -57,6 +57,28 @@ noted here for whoever adds one later.
 
 Append-only, like SecurityEvent: an audit row records a fact about a
 past invocation, so there is no `updated_at` and no update path.
+
+Step 13D — Case-scoped Copilot audit rows (migration required, discovery
+and smallest-safe-extension approved via the Step 13D gate report):
+`alert_id` becomes NULLABLE and a new nullable `case_id` (FK to
+`cases.id`, `ondelete="CASCADE"`, same reasoning as `alert_id`) is added.
+A row is EITHER alert-scoped (app.services.copilot_service.ask()/
+follow_up()) OR case-scoped (app.services.case_copilot_service.
+ask_about_case()) — never both, never neither: `ck_copilot_audits_exactly_one_scope`
+enforces "exactly one of alert_id/case_id is set" at the database level,
+the same "closed, mutually exclusive scope" pattern app.models.case_audit's
+own `ck_case_audits_related_alert_id_matches_action` already established
+for a structurally identical problem (a column that is required for some
+actions and forbidden for others). This is deliberately NOT a polymorphic
+`scope_type`/`scope_id` pair (the brief's own alternative suggestion): two
+real, independently-FK-constrained nullable columns let Postgres itself
+enforce referential integrity for whichever one is set, which a single
+untyped `scope_id` column could not.
+`request_type` gains a third value, 'case_brief' — the Case-scoped
+counterpart to 'ask' — which, like 'ask', never carries conversation
+history (Step 13D's approved scope is single-shot only; see
+app.schemas.case_ai.AICaseRequest's own docstring for why follow-up is
+deferred).
 """
 
 import uuid
@@ -68,19 +90,28 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.alert import Alert
+from app.models.case import Case
 
 
 class CopilotAudit(Base):
     """One audit row per app.services.copilot_service.ask()/follow_up()
-    invocation. See this module's docstring for the full field rationale
-    and the list of things deliberately never persisted here.
+    OR app.services.case_copilot_service.ask_about_case() invocation. See
+    this module's docstring for the full field rationale and the list of
+    things deliberately never persisted here.
     """
 
     __tablename__ = "copilot_audits"
     __table_args__ = (
         Index("ix_copilot_audits_alert_id", "alert_id"),
+        Index("ix_copilot_audits_case_id", "case_id"),
         Index("ix_copilot_audits_created_at", "created_at"),
-        CheckConstraint("request_type IN ('ask', 'follow_up')", name="ck_copilot_audits_request_type_valid"),
+        CheckConstraint(
+            "request_type IN ('ask', 'follow_up', 'case_brief')", name="ck_copilot_audits_request_type_valid"
+        ),
+        CheckConstraint(
+            "(alert_id IS NOT NULL AND case_id IS NULL) OR (alert_id IS NULL AND case_id IS NOT NULL)",
+            name="ck_copilot_audits_exactly_one_scope",
+        ),
         CheckConstraint("outcome IN ('success', 'failure')", name="ck_copilot_audits_outcome_valid"),
         CheckConstraint(
             "validation_status IN ('passed', 'failed', 'not_applicable')",
@@ -108,11 +139,13 @@ class CopilotAudit(Base):
         ),
         CheckConstraint("duration_ms IS NULL OR duration_ms >= 0", name="ck_copilot_audits_duration_ms_non_negative"),
         # An initial ask() has no conversation history at all (see
-        # AIRequest's None-vs-list mode discriminator) — history_turn_count
-        # must be NULL for 'ask' rows, and is free to be NULL (no prior
-        # turns) or >= 0 for 'follow_up' rows.
+        # AIRequest's None-vs-list mode discriminator), and neither does
+        # case_brief (AICaseRequest has no conversation_history field at
+        # all — see that schema's own docstring) — history_turn_count
+        # must be NULL for both 'ask' and 'case_brief' rows, and is free
+        # to be NULL (no prior turns) or >= 0 for 'follow_up' rows.
         CheckConstraint(
-            "(request_type = 'ask' AND history_turn_count IS NULL) OR (request_type = 'follow_up')",
+            "(request_type IN ('ask', 'case_brief') AND history_turn_count IS NULL) OR (request_type = 'follow_up')",
             name="ck_copilot_audits_history_turn_count_only_for_follow_up",
         ),
         # Ties the three outcome axes together for CopilotService's
@@ -132,13 +165,20 @@ class CopilotAudit(Base):
         server_default=text("gen_random_uuid()"),
     )
 
-    alert_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("alerts.id", ondelete="CASCADE"), nullable=False
+    # Exactly one of alert_id/case_id is set — see this module's own
+    # Step 13D docstring section and ck_copilot_audits_exactly_one_scope.
+    alert_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("alerts.id", ondelete="CASCADE"), nullable=True
+    )
+    case_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("cases.id", ondelete="CASCADE"), nullable=True
     )
 
     # 'ask' == CopilotService.ask() (initial structured assessment),
     # 'follow_up' == CopilotService.follow_up() (alert-scoped follow-up
-    # conversation) — see app.services.copilot_service.
+    # conversation), 'case_brief' == CaseCopilotService.ask_about_case()
+    # (Step 13D, Case-scoped investigation brief) — see
+    # app.services.copilot_service / app.services.case_copilot_service.
     request_type: Mapped[str] = mapped_column(String(20), nullable=False)
 
     # Open vocabulary by design (matches AIProvider.name / the model
@@ -168,4 +208,5 @@ class CopilotAudit(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    alert: Mapped[Alert] = relationship(Alert)
+    alert: Mapped[Alert | None] = relationship(Alert)
+    case: Mapped[Case | None] = relationship(Case)

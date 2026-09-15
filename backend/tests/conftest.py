@@ -24,9 +24,13 @@ import app.models  # noqa: F401  (registers models on Base.metadata)
 from app.core.config import get_settings
 from app.core.database import Base
 from app.models.alert import Alert
+from app.models.case import Case
+from app.models.case_audit import CaseAudit
+from app.models.case_note import CaseNote
 from app.models.security_event import SecurityEvent
 from app.mitre.registry import MAPPING_SOURCE, MITRE_ATTACK_VERSION
 from app.schemas.ai import AIContext, AIEntities, MITREContext
+from app.schemas.case_ai import AICaseContext
 
 
 def _build_test_database_url() -> str | None:
@@ -215,5 +219,103 @@ def ai_context_factory():
         }
         defaults.update(overrides)
         return AIContext(**defaults)
+
+    return _make
+
+
+@pytest.fixture
+def case_factory():
+    """Build transient (unpersisted) Case instances for Step 13D
+    AICaseContextBuilder/CaseCopilotService unit tests — same "id set
+    explicitly, never inserted" pattern as alert_factory above.
+    """
+
+    def _make(**overrides) -> Case:
+        now = datetime.now(timezone.utc)
+        defaults = {
+            "id": uuid.uuid4(),
+            "case_number": 1,
+            "title": "Test case",
+            "description": "Test case description.",
+            "status": "OPEN",
+            "priority": "medium",
+            "created_at": now,
+            "updated_at": now,
+            "created_by": uuid.uuid4(),
+            "owner_id": None,
+            "closed_at": None,
+            "closure_reason": None,
+        }
+        defaults.update(overrides)
+        return Case(**defaults)
+
+    return _make
+
+
+@pytest.fixture
+def case_note_factory():
+    """Build transient (unpersisted) CaseNote instances — same pattern
+    as event_factory/alert_factory above.
+    """
+
+    def _make(**overrides) -> CaseNote:
+        defaults = {
+            "id": uuid.uuid4(),
+            "case_id": uuid.uuid4(),
+            "author_id": uuid.uuid4(),
+            "body": "Test note.",
+            "created_at": datetime.now(timezone.utc),
+        }
+        defaults.update(overrides)
+        return CaseNote(**defaults)
+
+    return _make
+
+
+@pytest.fixture
+def case_audit_factory():
+    """Build transient (unpersisted) CaseAudit instances — same pattern
+    as event_factory/alert_factory above.
+    """
+
+    def _make(**overrides) -> CaseAudit:
+        defaults = {
+            "id": uuid.uuid4(),
+            "case_id": uuid.uuid4(),
+            "actor_user_id": uuid.uuid4(),
+            "action": "CASE_CREATED",
+            "related_alert_id": None,
+            "previous_value": None,
+            "new_value": None,
+            "created_at": datetime.now(timezone.utc),
+        }
+        defaults.update(overrides)
+        return CaseAudit(**defaults)
+
+    return _make
+
+
+@pytest.fixture
+def ai_case_context_factory():
+    """Build minimal, valid AICaseContext instances directly (Step 13D) —
+    same reasoning as ai_context_factory above: for provider/prompt-layer
+    unit tests that don't care how the context was derived.
+    """
+
+    def _make(**overrides) -> AICaseContext:
+        defaults = {
+            "case_id": uuid.uuid4(),
+            "title": "Test case",
+            "description": "Test case description.",
+            "status": "OPEN",
+            "priority": "medium",
+            "alerts": [],
+            "notes": [],
+            "audit": [],
+            "focused_alert": None,
+            "mitre_candidates": [],
+        }
+        defaults.update(overrides)
+        return AICaseContext(**defaults)
 
     return _make

@@ -64,3 +64,26 @@ class CopilotAuditRepository:
             .offset(offset)
         )
         return list(self._db.scalars(stmt))
+
+    def list_for_case(
+        self, case_id: uuid.UUID, *, limit: int = DEFAULT_LIST_LIMIT, offset: int = 0
+    ) -> list[CopilotAudit]:
+        """Step 13D: the Case-scoped counterpart to list_for_alert --
+        identical shape, ordering, and bounds, filtering on `case_id`
+        instead of `alert_id`. Always scoped to exactly one case; there
+        is no code path here that can return another case's (or an
+        alert's) rows.
+        """
+        if not (1 <= limit <= MAX_LIST_LIMIT):
+            raise ValueError(f"limit must be between 1 and {MAX_LIST_LIMIT}, got {limit}")
+        if offset < 0:
+            raise ValueError(f"offset must be >= 0, got {offset}")
+
+        stmt = (
+            select(CopilotAudit)
+            .where(CopilotAudit.case_id == case_id)
+            .order_by(CopilotAudit.created_at.desc(), CopilotAudit.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(self._db.scalars(stmt))

@@ -364,6 +364,7 @@ def test_response_schema_has_only_the_approved_fields():
     assert set(CopilotAuditResponse.model_fields) == {
         "id",
         "alert_id",
+        "case_id",
         "request_type",
         "provider_name",
         "model_name",

@@ -12,14 +12,20 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.core.security import hash_password
 from app.models.alert import Alert
+from app.models.case import Case
 from app.models.security_event import SecurityEvent
+from app.models.user import User
 from app.repositories.alert import AlertRepository
+from app.repositories.case import CaseRepository
 from app.repositories.copilot_audit import CopilotAuditRepository
+from app.repositories.user import UserRepository
 from app.schemas.ai import CopilotMessage, CopilotMessageRole
 from app.schemas.copilot_audit import AuditOutcome, AuditRequestType, AuditValidationStatus
 from app.services.copilot_audit_service import (
     CopilotAuditAlertNotFoundError,
+    CopilotAuditCaseNotFoundError,
     CopilotAuditPersistenceError,
     CopilotAuditService,
     CopilotAuditValidationError,
@@ -225,8 +231,36 @@ def _make_alert(db_session, **overrides) -> Alert:
     return alert
 
 
+def _make_user(db_session, **overrides) -> User:
+    defaults = dict(
+        email=f"copilotauditsvc-{uuid.uuid4().hex[:8]}@example.com",
+        password_hash=hash_password("correct horse battery staple"),
+        role="analyst",
+        is_active=True,
+    )
+    defaults.update(overrides)
+    return UserRepository(db_session).create(User(**defaults))
+
+
+def _make_case(db_session, **overrides) -> Case:
+    analyst = _make_user(db_session)
+    defaults = dict(title="Test case", description="A test case description.", created_by=analyst.id)
+    defaults.update(overrides)
+    case = Case(**defaults)
+    db_session.add(case)
+    db_session.commit()
+    db_session.refresh(case)
+    return case
+
+
 def _service(db_session) -> CopilotAuditService:
     return CopilotAuditService(CopilotAuditRepository(db_session), AlertRepository(db_session))
+
+
+def _case_service(db_session) -> CopilotAuditService:
+    return CopilotAuditService(
+        CopilotAuditRepository(db_session), AlertRepository(db_session), CaseRepository(db_session)
+    )
 
 
 class _FailingCopilotAuditRepository:
@@ -487,6 +521,197 @@ def test_get_by_id_delegates_to_repository(db_session):
 
     assert fetched is not None
     assert fetched.id == created.id
+
+
+# =============================================================================
+# Case scope (Step 13D) -- record()/list_for_case() behavior
+# =============================================================================
+
+
+@pytest.mark.integration
+def test_record_creates_a_case_brief_audit(db_session):
+    case = _make_case(db_session)
+    service = _case_service(db_session)
+
+    audit = service.record(
+        case_id=case.id,
+        request_type=AuditRequestType.CASE_BRIEF,
+        provider_name="mock",
+        model_name="amnix-mock-v1",
+        outcome=AuditOutcome.SUCCESS,
+        validation_status=AuditValidationStatus.PASSED,
+        http_status=200,
+        question="What should I know about this case?",
+    )
+
+    assert audit.id is not None
+    assert audit.case_id == case.id
+    assert audit.alert_id is None
+    assert audit.request_type == "case_brief"
+    assert audit.history_turn_count is None
+
+
+@pytest.mark.integration
+def test_record_rejects_both_alert_id_and_case_id_supplied(db_session):
+    alert = _make_alert(db_session)
+    case = _make_case(db_session)
+    service = _case_service(db_session)
+
+    with pytest.raises(CopilotAuditValidationError):
+        service.record(
+            alert_id=alert.id,
+            case_id=case.id,
+            request_type=AuditRequestType.CASE_BRIEF,
+            provider_name="mock",
+            model_name="amnix-mock-v1",
+            outcome=AuditOutcome.SUCCESS,
+            validation_status=AuditValidationStatus.PASSED,
+            http_status=200,
+            question="Why?",
+        )
+
+
+@pytest.mark.integration
+def test_record_rejects_neither_alert_id_nor_case_id_supplied(db_session):
+    service = _case_service(db_session)
+
+    with pytest.raises(CopilotAuditValidationError):
+        service.record(
+            request_type=AuditRequestType.CASE_BRIEF,
+            provider_name="mock",
+            model_name="amnix-mock-v1",
+            outcome=AuditOutcome.SUCCESS,
+            validation_status=AuditValidationStatus.PASSED,
+            http_status=200,
+            question="Why?",
+        )
+
+
+@pytest.mark.integration
+def test_record_rejects_unknown_case(db_session):
+    service = _case_service(db_session)
+
+    with pytest.raises(CopilotAuditCaseNotFoundError) as exc_info:
+        service.record(
+            case_id=uuid.uuid4(),
+            request_type=AuditRequestType.CASE_BRIEF,
+            provider_name="mock",
+            model_name="amnix-mock-v1",
+            outcome=AuditOutcome.SUCCESS,
+            validation_status=AuditValidationStatus.PASSED,
+            http_status=200,
+            question="Why?",
+        )
+    assert exc_info.value.case_id is not None
+
+
+@pytest.mark.integration
+def test_record_case_scoped_call_without_case_repository_raises_value_error(db_session):
+    """A programming-error signal, not a typed CopilotAuditError an API
+    layer would map to an HTTP response -- this should never actually be
+    reachable through app.api.cases' own DI wiring, which always supplies
+    a case_repository.
+    """
+    case = _make_case(db_session)
+    service = _service(db_session)  # constructed WITHOUT a case_repository
+
+    with pytest.raises(ValueError):
+        service.record(
+            case_id=case.id,
+            request_type=AuditRequestType.CASE_BRIEF,
+            provider_name="mock",
+            model_name="amnix-mock-v1",
+            outcome=AuditOutcome.SUCCESS,
+            validation_status=AuditValidationStatus.PASSED,
+            http_status=200,
+            question="Why?",
+        )
+
+
+@pytest.mark.integration
+def test_record_rejects_history_supplied_for_case_brief(db_session):
+    case = _make_case(db_session)
+    service = _case_service(db_session)
+
+    with pytest.raises(CopilotAuditValidationError):
+        service.record(
+            case_id=case.id,
+            request_type=AuditRequestType.CASE_BRIEF,
+            provider_name="mock",
+            model_name="amnix-mock-v1",
+            outcome=AuditOutcome.SUCCESS,
+            validation_status=AuditValidationStatus.PASSED,
+            http_status=200,
+            question="Why?",
+            history=[CopilotMessage(role=CopilotMessageRole.USER, content="stray turn")],
+        )
+
+
+@pytest.mark.integration
+def test_list_for_case_delegates_to_repository(db_session):
+    case = _make_case(db_session)
+    service = _case_service(db_session)
+    service.record(
+        case_id=case.id,
+        request_type=AuditRequestType.CASE_BRIEF,
+        provider_name="mock",
+        model_name="amnix-mock-v1",
+        outcome=AuditOutcome.SUCCESS,
+        validation_status=AuditValidationStatus.PASSED,
+        http_status=200,
+        question="Why?",
+    )
+
+    results = service.list_for_case(case.id)
+
+    assert len(results) == 1
+    assert results[0].case_id == case.id
+    assert results[0].alert_id is None
+
+
+@pytest.mark.integration
+def test_list_for_case_does_not_return_another_cases_or_an_alerts_audits(db_session):
+    case_a = _make_case(db_session)
+    case_b = _make_case(db_session)
+    alert = _make_alert(db_session)
+    service = _case_service(db_session)
+
+    service.record(
+        case_id=case_a.id, request_type=AuditRequestType.CASE_BRIEF, provider_name="mock",
+        model_name="amnix-mock-v1", outcome=AuditOutcome.SUCCESS, validation_status=AuditValidationStatus.PASSED,
+        http_status=200, question="A",
+    )
+    service.record(
+        case_id=case_b.id, request_type=AuditRequestType.CASE_BRIEF, provider_name="mock",
+        model_name="amnix-mock-v1", outcome=AuditOutcome.SUCCESS, validation_status=AuditValidationStatus.PASSED,
+        http_status=200, question="B",
+    )
+    service.record(
+        alert_id=alert.id, request_type=AuditRequestType.ASK, provider_name="mock",
+        model_name="amnix-mock-v1", outcome=AuditOutcome.SUCCESS, validation_status=AuditValidationStatus.PASSED,
+        http_status=200, question="C",
+    )
+
+    results = service.list_for_case(case_a.id)
+
+    assert len(results) == 1
+    assert results[0].case_id == case_a.id
+
+
+@pytest.mark.integration
+def test_record_case_brief_does_not_change_case_status_or_priority(db_session):
+    case = _make_case(db_session)
+    service = _case_service(db_session)
+
+    service.record(
+        case_id=case.id, request_type=AuditRequestType.CASE_BRIEF, provider_name="mock",
+        model_name="amnix-mock-v1", outcome=AuditOutcome.SUCCESS, validation_status=AuditValidationStatus.PASSED,
+        http_status=200, question="Should I close this case?",
+    )
+
+    db_session.refresh(case)
+    assert case.status == "OPEN"
+    assert case.owner_id is None
 
 
 # =============================================================================

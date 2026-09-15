@@ -356,7 +356,7 @@ def test_copilot_audit_response_excludes_raw_prompt_context_history(client, db_s
     body = response.json()
     assert body["items"]
     assert set(body["items"][0].keys()) == {
-        "id", "alert_id", "request_type", "provider_name", "model_name", "outcome", "validation_status",
+        "id", "alert_id", "case_id", "request_type", "provider_name", "model_name", "outcome", "validation_status",
         "http_status", "question_fingerprint", "question_length", "history_turn_count", "duration_ms", "created_at",
     }
     for forbidden in ("system_instructions", "conversation_history", "raw_response", "prompt", "answer", "assessment"):

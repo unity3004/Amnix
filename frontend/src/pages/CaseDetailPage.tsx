@@ -17,6 +17,7 @@ import { CaseStatusPanel } from '@/features/cases/components/CaseStatusPanel'
 import { CaseOwnerPanel } from '@/features/cases/components/CaseOwnerPanel'
 import { CaseAlertsPanel } from '@/features/cases/components/CaseAlertsPanel'
 import { CaseSummaryPanel } from '@/features/cases/components/CaseSummaryPanel'
+import { CaseCopilotPanel } from '@/features/cases/components/CaseCopilotPanel'
 import { CaseEvidenceSummaryPanel } from '@/features/cases/components/CaseEvidenceSummaryPanel'
 import { CaseClosureReadinessPanel } from '@/features/cases/components/CaseClosureReadinessPanel'
 import { CaseTimelinePanel } from '@/features/cases/components/CaseTimelinePanel'
@@ -186,6 +187,18 @@ export function CaseDetailPage() {
           <div className="mt-4">
             <CaseSummaryPanel caseItem={caseItem} alerts={alertsData?.items ?? []} notes={notesData?.items ?? []} currentUserId={user?.id} />
           </div>
+
+          {/* ---- AI Investigation Brief (Step 13D): explicit,
+           * analyst-triggered only -- nothing here calls the AI layer
+           * until "Generate Investigation Brief" is clicked. Kept as its
+           * own, visually distinct Card immediately below the
+           * deterministic Case Summary above so the two are never
+           * confused: the Summary is application-generated orientation,
+           * this panel is AI-generated advisory output with its own
+           * mandatory trust notice (see CaseCopilotPanel). ---- */}
+          <Card className="mt-4 overflow-hidden">
+            <CaseCopilotPanel caseId={caseItem.id} alerts={alertsData?.items ?? []} />
+          </Card>
 
           <Card className="mt-4 overflow-hidden">
             <CaseWorkflowGuidance />

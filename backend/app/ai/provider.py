@@ -12,11 +12,20 @@ Concrete providers may still explicitly subclass AIProvider for a clear,
 greppable "implements this interface" signal in code (see
 app.ai.providers.mock.MockAIProvider); @runtime_checkable means that's
 optional, not required — structural conformance is enough.
+
+Step 13D adds generate_case(): a second, independent generation method for
+Case-scoped requests (app.schemas.case_ai.AICaseRequest), deliberately NOT
+a union-typed overload of generate() — see app.schemas.case_ai's own
+docstring for why AICaseContext is kept fully independent of AIContext.
+Keeping this a distinct method (not a widened `request` type on
+generate()) means every existing provider's alert-scoped generate()
+implementation is completely untouched by this step.
 """
 
 from typing import Protocol, runtime_checkable
 
 from app.schemas.ai import AIRequest, AIResponse
+from app.schemas.case_ai import AICaseRequest
 
 
 @runtime_checkable
@@ -32,7 +41,7 @@ class AIProvider(Protocol):
         ...
 
     def generate(self, request: AIRequest) -> AIResponse:
-        """Produce a response for the given request.
+        """Produce a response for the given alert-scoped request.
 
         Implementations must never treat `request.context` or
         `request.user_question` as instructions — only
@@ -41,5 +50,13 @@ class AIProvider(Protocol):
         concern; this interface itself has no opinion on any of that,
         which is what lets a real (async, potentially slow) provider
         replace MockAIProvider later without changing this contract.
+        """
+        ...
+
+    def generate_case(self, request: AICaseRequest) -> AIResponse:
+        """Produce a response for the given Case-scoped request (Step
+        13D). Same trust rules as generate(): `request.context` and
+        `request.user_question` are always data, never instructions;
+        only `request.system_instructions` may direct the model.
         """
         ...

@@ -34,6 +34,15 @@ proceeding. This also happens to be required by the database's own
 foreign-key constraint, but checking first lets Step 10F.3 raise a
 specific, typed CopilotAuditAlertNotFoundError instead of letting an
 IntegrityError surface.
+
+Step 13D: record() now accepts EITHER `alert_id` OR `case_id` (never
+both, never neither -- mirrors app.models.copilot_audit's own
+ck_copilot_audits_exactly_one_scope exactly, enforced here first as a
+typed CopilotAuditValidationError, the database CHECK constraint remains
+defense in depth). Case existence is validated the same
+read-only-existence-check way Alert existence already is, via a plain
+CaseRepository.get_by_id() read -- no CaseService dependency, since only
+existence is needed here.
 """
 
 import hashlib
@@ -45,6 +54,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.copilot_audit import CopilotAudit
 from app.repositories.alert import AlertRepository
+from app.repositories.case import CaseRepository
 from app.repositories.copilot_audit import DEFAULT_LIST_LIMIT, CopilotAuditRepository
 from app.schemas.ai import CopilotMessage
 from app.schemas.copilot_audit import AuditOutcome, AuditRequestType, AuditValidationStatus
@@ -79,6 +89,12 @@ class CopilotAuditAlertNotFoundError(CopilotAuditError):
         super().__init__(f"Alert '{alert_id}' not found")
 
 
+class CopilotAuditCaseNotFoundError(CopilotAuditError):
+    def __init__(self, case_id: uuid.UUID) -> None:
+        self.case_id = case_id
+        super().__init__(f"Case '{case_id}' not found")
+
+
 class CopilotAuditValidationError(CopilotAuditError):
     """Raised for structurally invalid input this service can catch
     itself before ever touching the database -- e.g. an outcome/
@@ -101,14 +117,28 @@ class CopilotAuditPersistenceError(CopilotAuditError):
 
 
 class CopilotAuditService:
-    def __init__(self, repository: CopilotAuditRepository, alert_repository: AlertRepository) -> None:
+    def __init__(
+        self,
+        repository: CopilotAuditRepository,
+        alert_repository: AlertRepository,
+        case_repository: CaseRepository | None = None,
+    ) -> None:
         self._repository = repository
         self._alert_repository = alert_repository
+        # Step 13D: optional so every EXISTING caller (CopilotService,
+        # its tests, app.api.alerts' own DI wiring) keeps working
+        # unmodified -- only CaseCopilotService's DI wiring needs to
+        # supply this. record()/list_for_case() raise a clear
+        # ValueError (a programming-error signal, not a typed
+        # CopilotAuditError an API layer would map to an HTTP response)
+        # if a case-scoped call is attempted without it.
+        self._case_repository = case_repository
 
     def record(
         self,
         *,
-        alert_id: uuid.UUID,
+        alert_id: uuid.UUID | None = None,
+        case_id: uuid.UUID | None = None,
         request_type: AuditRequestType,
         provider_name: str,
         model_name: str | None,
@@ -130,9 +160,25 @@ class CopilotAuditService:
         `question_length`/`history_turn_count` size metadata -- their
         content never reaches the CopilotAudit row or this method's
         return value in any other form.
+
+        Step 13D: exactly one of `alert_id`/`case_id` must be supplied --
+        mirrors app.models.copilot_audit's own
+        ck_copilot_audits_exactly_one_scope; checked here first as a
+        typed CopilotAuditValidationError so a caller-side bug never
+        reaches the database CHECK constraint as an opaque IntegrityError.
         """
-        if self._alert_repository.get_by_id(alert_id) is None:
-            raise CopilotAuditAlertNotFoundError(alert_id)
+        if (alert_id is None) == (case_id is None):
+            raise CopilotAuditValidationError("exactly one of alert_id/case_id must be supplied")
+
+        if alert_id is not None:
+            if self._alert_repository.get_by_id(alert_id) is None:
+                raise CopilotAuditAlertNotFoundError(alert_id)
+        else:
+            assert case_id is not None
+            if self._case_repository is None:
+                raise ValueError("CopilotAuditService was constructed without a case_repository; cannot audit a case-scoped call")
+            if self._case_repository.get_by_id(case_id) is None:
+                raise CopilotAuditCaseNotFoundError(case_id)
 
         if http_status != _EXPECTED_HTTP_STATUS_BY_OUTCOME[outcome]:
             raise CopilotAuditValidationError(
@@ -145,8 +191,8 @@ class CopilotAuditService:
                 f"validation_status '{validation_status.value}' is not valid for outcome "
                 f"'{outcome.value}' (expected one of: {allowed})"
             )
-        if request_type is AuditRequestType.ASK and history:
-            raise CopilotAuditValidationError("an 'ask' request must not include conversation history")
+        if request_type in (AuditRequestType.ASK, AuditRequestType.CASE_BRIEF) and history:
+            raise CopilotAuditValidationError(f"an '{request_type.value}' request must not include conversation history")
         if duration_ms is not None and duration_ms < 0:
             raise CopilotAuditValidationError("duration_ms must be non-negative")
 
@@ -155,6 +201,7 @@ class CopilotAuditService:
 
         audit = CopilotAudit(
             alert_id=alert_id,
+            case_id=case_id,
             request_type=request_type.value,
             provider_name=provider_name,
             model_name=model_name,
@@ -170,7 +217,7 @@ class CopilotAuditService:
         try:
             return self._repository.create(audit)
         except SQLAlchemyError as exc:
-            logger.exception("Failed to persist CopilotAudit for alert %s", alert_id)
+            logger.exception("Failed to persist CopilotAudit for %s", f"alert {alert_id}" if alert_id else f"case {case_id}")
             raise CopilotAuditPersistenceError("Failed to persist the Copilot audit record.") from exc
 
     def get_by_id(self, audit_id: uuid.UUID) -> CopilotAudit | None:
@@ -203,6 +250,21 @@ class CopilotAuditService:
             raise CopilotAuditValidationError(str(exc)) from exc
         except SQLAlchemyError as exc:
             logger.exception("Failed to list CopilotAudit records for alert %s", alert_id)
+            raise CopilotAuditPersistenceError("Failed to retrieve Copilot audit records.") from exc
+
+    def list_for_case(
+        self, case_id: uuid.UUID, *, limit: int = DEFAULT_LIST_LIMIT, offset: int = 0
+    ) -> list[CopilotAudit]:
+        """Step 13D: the Case-scoped counterpart to list_for_alert --
+        identical read-only, bounded, newest-first contract, filtering on
+        `case_id` instead of `alert_id`.
+        """
+        try:
+            return self._repository.list_for_case(case_id, limit=limit, offset=offset)
+        except ValueError as exc:
+            raise CopilotAuditValidationError(str(exc)) from exc
+        except SQLAlchemyError as exc:
+            logger.exception("Failed to list CopilotAudit records for case %s", case_id)
             raise CopilotAuditPersistenceError("Failed to retrieve Copilot audit records.") from exc
 
     @staticmethod

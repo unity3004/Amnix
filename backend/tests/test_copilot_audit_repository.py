@@ -13,10 +13,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core.security import hash_password
 from app.models.alert import Alert
+from app.models.case import Case
 from app.models.copilot_audit import CopilotAudit
 from app.models.security_event import SecurityEvent
+from app.models.user import User
 from app.repositories.copilot_audit import MAX_LIST_LIMIT, CopilotAuditRepository
+from app.repositories.user import UserRepository
 
 pytestmark = pytest.mark.integration
 
@@ -56,6 +60,47 @@ def _make_alert(db_session, **overrides) -> Alert:
     db_session.commit()
     db_session.refresh(alert)
     return alert
+
+
+def _make_user(db_session, **overrides) -> User:
+    defaults = dict(
+        email=f"copilotauditrepo-{uuid.uuid4().hex[:8]}@example.com",
+        password_hash=hash_password("correct horse battery staple"),
+        role="analyst",
+        is_active=True,
+    )
+    defaults.update(overrides)
+    return UserRepository(db_session).create(User(**defaults))
+
+
+def _make_case(db_session, **overrides) -> Case:
+    analyst = _make_user(db_session)
+    defaults = dict(title="Test case", description="A test case description.", created_by=analyst.id)
+    defaults.update(overrides)
+    case = Case(**defaults)
+    db_session.add(case)
+    db_session.commit()
+    db_session.refresh(case)
+    return case
+
+
+def _case_audit_kwargs(case_id: uuid.UUID, **overrides) -> dict:
+    defaults = dict(
+        alert_id=None,
+        case_id=case_id,
+        request_type="case_brief",
+        provider_name="mock",
+        model_name="amnix-mock-v1",
+        outcome="success",
+        validation_status="passed",
+        http_status=200,
+        question_fingerprint="a" * 64,
+        question_length=10,
+        history_turn_count=None,
+        duration_ms=5,
+    )
+    defaults.update(overrides)
+    return defaults
 
 
 def _create_with_timestamp(repo: CopilotAuditRepository, db_session, alert_id: uuid.UUID, created_at: datetime) -> CopilotAudit:
@@ -235,3 +280,94 @@ def test_list_for_alert_returns_empty_list_for_alert_with_no_audits(db_session):
     repo = CopilotAuditRepository(db_session)
 
     assert repo.list_for_alert(alert.id) == []
+
+
+# =============================================================================
+# Case scope (Step 13D) -- list_for_case
+# =============================================================================
+
+
+def test_list_for_case_returns_only_that_cases_audits(db_session):
+    case_a = _make_case(db_session)
+    case_b = _make_case(db_session)
+    repo = CopilotAuditRepository(db_session)
+    repo.create(CopilotAudit(**_case_audit_kwargs(case_a.id)))
+    repo.create(CopilotAudit(**_case_audit_kwargs(case_a.id)))
+    repo.create(CopilotAudit(**_case_audit_kwargs(case_b.id)))
+
+    results = repo.list_for_case(case_a.id)
+
+    assert len(results) == 2
+    assert all(r.case_id == case_a.id for r in results)
+
+
+def test_list_for_case_never_returns_another_cases_or_an_alerts_rows(db_session):
+    case_a = _make_case(db_session)
+    case_b = _make_case(db_session)
+    alert = _make_alert(db_session)
+    repo = CopilotAuditRepository(db_session)
+    repo.create(CopilotAudit(**_case_audit_kwargs(case_b.id)))
+    repo.create(CopilotAudit(**_audit_kwargs(alert.id)))
+
+    results = repo.list_for_case(case_a.id)
+
+    assert results == []
+
+
+def test_list_for_case_is_newest_first(db_session):
+    case = _make_case(db_session)
+    repo = CopilotAuditRepository(db_session)
+    base = datetime.now(timezone.utc)
+
+    def _create_case_audit_with_timestamp(created_at):
+        audit = CopilotAudit(**_case_audit_kwargs(case.id))
+        audit.created_at = created_at
+        db_session.add(audit)
+        db_session.commit()
+        db_session.refresh(audit)
+        return audit
+
+    first = _create_case_audit_with_timestamp(base)
+    second = _create_case_audit_with_timestamp(base + timedelta(milliseconds=1))
+    third = _create_case_audit_with_timestamp(base + timedelta(milliseconds=2))
+
+    results = repo.list_for_case(case.id)
+
+    assert [r.id for r in results] == [third.id, second.id, first.id]
+
+
+def test_list_for_case_respects_limit(db_session):
+    case = _make_case(db_session)
+    repo = CopilotAuditRepository(db_session)
+    for _ in range(5):
+        repo.create(CopilotAudit(**_case_audit_kwargs(case.id)))
+
+    results = repo.list_for_case(case.id, limit=2)
+
+    assert len(results) == 2
+
+
+def test_list_for_case_limit_is_bounded(db_session):
+    case = _make_case(db_session)
+    repo = CopilotAuditRepository(db_session)
+
+    with pytest.raises(ValueError):
+        repo.list_for_case(case.id, limit=MAX_LIST_LIMIT + 1)
+
+    with pytest.raises(ValueError):
+        repo.list_for_case(case.id, limit=0)
+
+
+def test_list_for_case_rejects_negative_offset(db_session):
+    case = _make_case(db_session)
+    repo = CopilotAuditRepository(db_session)
+
+    with pytest.raises(ValueError):
+        repo.list_for_case(case.id, offset=-1)
+
+
+def test_list_for_case_returns_empty_list_for_case_with_no_audits(db_session):
+    case = _make_case(db_session)
+    repo = CopilotAuditRepository(db_session)
+
+    assert repo.list_for_case(case.id) == []

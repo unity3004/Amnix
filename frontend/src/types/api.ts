@@ -307,13 +307,14 @@ export interface CopilotFollowUpResponse {
 // Copilot Audits (app/schemas/copilot_audit.py)
 // ---------------------------------------------------------------------------
 
-export type CopilotAuditRequestType = 'ask' | 'follow_up'
+export type CopilotAuditRequestType = 'ask' | 'follow_up' | 'case_brief'
 export type CopilotAuditOutcome = 'success' | 'failure'
 export type CopilotAuditValidationStatus = 'passed' | 'failed' | 'not_applicable'
 
 export interface CopilotAuditResponse {
   id: string
-  alert_id: string
+  alert_id: string | null
+  case_id: string | null
   request_type: CopilotAuditRequestType
   provider_name: string
   model_name: string | null
@@ -331,6 +332,54 @@ export interface CopilotAuditListResponse {
   items: CopilotAuditResponse[]
   limit: number
   offset: number
+}
+
+// ---------------------------------------------------------------------------
+// Case Copilot / AI Investigation Brief (app/schemas/case_ai.py) -- Step 13D
+// ---------------------------------------------------------------------------
+
+export interface CaseKeyFinding {
+  type: CopilotFindingType
+  statement: string
+  supporting_alert_refs: string[]
+  supporting_event_refs: string[]
+}
+
+export interface CaseEvidenceItem {
+  field: string
+  value: string
+  alert_ref: string | null
+  event_ref: string | null
+  explanation: string
+}
+
+/** Deliberately has NO verdict/confidence field -- see
+ * app/schemas/case_ai.py's own module docstring for why a Case (which
+ * may contain zero, one, or many alerts of differing severities) has no
+ * single "is this malicious" question a verdict could coherently answer.
+ */
+export interface CaseInvestigationBrief {
+  summary: string
+  key_findings: CaseKeyFinding[]
+  supporting_evidence: CaseEvidenceItem[]
+  mitre_analysis: CopilotMitreAnalysisEntry[]
+  timeline_summary: string
+  uncertainties: string[]
+  recommended_next_steps: string[]
+}
+
+export interface CaseCopilotQuestionRequest {
+  question: string
+  focused_alert_id?: string | null
+}
+
+export interface CaseCopilotResponse {
+  case_id: string
+  provider: string
+  model: string
+  brief: CaseInvestigationBrief
+  generated_at: string
+  usage: Record<string, unknown> | null
 }
 
 // ---------------------------------------------------------------------------

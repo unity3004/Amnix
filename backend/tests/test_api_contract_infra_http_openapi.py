@@ -356,7 +356,7 @@ def test_copilot_audit_response_schema_matches_intended_public_fields():
     spec = app.openapi()
     schema = spec["components"]["schemas"]["CopilotAuditResponse"]
     assert set(schema["properties"].keys()) == {
-        "id", "alert_id", "request_type", "provider_name", "model_name", "outcome", "validation_status",
+        "id", "alert_id", "case_id", "request_type", "provider_name", "model_name", "outcome", "validation_status",
         "http_status", "question_fingerprint", "question_length", "history_turn_count", "duration_ms", "created_at",
     }
 

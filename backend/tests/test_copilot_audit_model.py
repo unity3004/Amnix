@@ -16,9 +16,13 @@ import pytest
 from sqlalchemy import inspect
 from sqlalchemy.exc import DataError, IntegrityError
 
+from app.core.security import hash_password
 from app.models.alert import Alert
+from app.models.case import Case
 from app.models.copilot_audit import CopilotAudit
 from app.models.security_event import SecurityEvent
+from app.models.user import User
+from app.repositories.user import UserRepository
 
 pytestmark = pytest.mark.integration
 
@@ -58,6 +62,28 @@ def _make_alert(db_session, **overrides) -> Alert:
     db_session.commit()
     db_session.refresh(alert)
     return alert
+
+
+def _make_user(db_session, **overrides) -> User:
+    defaults = dict(
+        email=f"copilotaudituser-{uuid.uuid4().hex[:8]}@example.com",
+        password_hash=hash_password("correct horse battery staple"),
+        role="analyst",
+        is_active=True,
+    )
+    defaults.update(overrides)
+    return UserRepository(db_session).create(User(**defaults))
+
+
+def _make_case(db_session, **overrides) -> Case:
+    analyst = _make_user(db_session)
+    defaults = dict(title="Test case", description="A test case description.", created_by=analyst.id)
+    defaults.update(overrides)
+    case = Case(**defaults)
+    db_session.add(case)
+    db_session.commit()
+    db_session.refresh(case)
+    return case
 
 
 def _fingerprint(text: str = "why was this alert generated?") -> str:
@@ -239,6 +265,113 @@ def test_history_turn_count_must_be_null_for_ask_requests(db_session):
         with db_session.begin_nested():
             db_session.add(audit)
             db_session.flush()
+
+
+# --- case scope (Step 13D) ------------------------------------------------
+
+
+def _valid_case_audit_kwargs(case_id: uuid.UUID, **overrides) -> dict:
+    defaults = dict(
+        alert_id=None,
+        case_id=case_id,
+        request_type="case_brief",
+        provider_name="mock",
+        model_name="amnix-mock-v1",
+        outcome="success",
+        validation_status="passed",
+        http_status=200,
+        question_fingerprint=_fingerprint("what should I know about this case?"),
+        question_length=32,
+        history_turn_count=None,
+        duration_ms=12,
+    )
+    defaults.update(overrides)
+    return defaults
+
+
+def test_valid_case_brief_audit_is_created(db_session):
+    case = _make_case(db_session)
+    audit = CopilotAudit(**_valid_case_audit_kwargs(case.id))
+
+    db_session.add(audit)
+    db_session.commit()
+    db_session.refresh(audit)
+
+    assert audit.id is not None
+    assert audit.case_id == case.id
+    assert audit.alert_id is None
+    assert audit.request_type == "case_brief"
+
+
+def test_case_audit_case_relationship_resolves_the_real_case(db_session):
+    case = _make_case(db_session)
+    audit = CopilotAudit(**_valid_case_audit_kwargs(case.id))
+    db_session.add(audit)
+    db_session.commit()
+    db_session.refresh(audit)
+
+    assert audit.case.id == case.id
+    assert audit.case.title == case.title
+
+
+def test_case_audit_rejects_unknown_case_id(db_session):
+    audit = CopilotAudit(**_valid_case_audit_kwargs(uuid.uuid4()))
+
+    with pytest.raises(IntegrityError):
+        with db_session.begin_nested():
+            db_session.add(audit)
+            db_session.flush()
+
+
+def test_audit_rejects_both_alert_id_and_case_id_set(db_session):
+    """Step 13D's exactly-one-scope CHECK constraint: an audit row must
+    be either alert-scoped or case-scoped, never both."""
+    alert = _make_alert(db_session)
+    case = _make_case(db_session)
+    audit = CopilotAudit(**_valid_audit_kwargs(alert.id, case_id=case.id, request_type="ask"))
+
+    with pytest.raises(IntegrityError):
+        with db_session.begin_nested():
+            db_session.add(audit)
+            db_session.flush()
+
+
+def test_audit_rejects_neither_alert_id_nor_case_id_set(db_session):
+    kwargs = _valid_case_audit_kwargs(uuid.uuid4())
+    kwargs["case_id"] = None
+    audit = CopilotAudit(**kwargs)
+
+    with pytest.raises(IntegrityError):
+        with db_session.begin_nested():
+            db_session.add(audit)
+            db_session.flush()
+
+
+def test_case_brief_request_type_requires_case_id_not_alert_id(db_session):
+    """request_type='case_brief' is a valid enum value, but pairing it
+    with an alert_id-only row still violates the exactly-one-scope
+    constraint's spirit only insofar as it's still a valid *scope* (one
+    of the two is set) -- this test instead proves history_turn_count
+    is still forbidden for case_brief, mirroring 'ask'."""
+    case = _make_case(db_session)
+    audit = CopilotAudit(**_valid_case_audit_kwargs(case.id, history_turn_count=0))
+
+    with pytest.raises(IntegrityError):
+        with db_session.begin_nested():
+            db_session.add(audit)
+            db_session.flush()
+
+
+def test_multiple_audits_can_reference_the_same_case(db_session):
+    case = _make_case(db_session)
+    first = CopilotAudit(**_valid_case_audit_kwargs(case.id))
+    second = CopilotAudit(**_valid_case_audit_kwargs(case.id))
+
+    db_session.add_all([first, second])
+    db_session.commit()
+
+    reloaded_case = db_session.get(Case, case.id)
+    assert reloaded_case is not None
 
 
 # --- Alert foreign-key relationship --------------------------------------
@@ -431,6 +564,7 @@ def test_table_schema_matches_the_model(_pg_engine):
     expected_columns = {
         "id",
         "alert_id",
+        "case_id",
         "request_type",
         "provider_name",
         "model_name",
@@ -446,19 +580,32 @@ def test_table_schema_matches_the_model(_pg_engine):
     assert set(columns) == expected_columns
     assert columns["created_at"]["type"].timezone is True
     assert columns["model_name"]["nullable"] is True
-    assert columns["alert_id"]["nullable"] is False
+    # Step 13D: alert_id/case_id are each nullable now -- exactly one of
+    # the two must be set, enforced by ck_copilot_audits_exactly_one_scope
+    # rather than a NOT NULL column constraint.
+    assert columns["alert_id"]["nullable"] is True
+    assert columns["case_id"]["nullable"] is True
 
 
 def test_alert_id_has_a_real_foreign_key(_pg_engine):
     inspector = inspect(_pg_engine)
-    foreign_keys = inspector.get_foreign_keys("copilot_audits")
+    foreign_keys = {fk["constrained_columns"][0]: fk for fk in inspector.get_foreign_keys("copilot_audits")}
 
-    assert len(foreign_keys) == 1
-    fk = foreign_keys[0]
-    assert fk["constrained_columns"] == ["alert_id"]
-    assert fk["referred_table"] == "alerts"
-    assert fk["referred_columns"] == ["id"]
-    assert fk["options"].get("ondelete") == "CASCADE"
+    assert set(foreign_keys) == {"alert_id", "case_id"}
+    alert_fk = foreign_keys["alert_id"]
+    assert alert_fk["referred_table"] == "alerts"
+    assert alert_fk["referred_columns"] == ["id"]
+    assert alert_fk["options"].get("ondelete") == "CASCADE"
+
+
+def test_case_id_has_a_real_foreign_key(_pg_engine):
+    inspector = inspect(_pg_engine)
+    foreign_keys = {fk["constrained_columns"][0]: fk for fk in inspector.get_foreign_keys("copilot_audits")}
+
+    case_fk = foreign_keys["case_id"]
+    assert case_fk["referred_table"] == "cases"
+    assert case_fk["referred_columns"] == ["id"]
+    assert case_fk["options"].get("ondelete") == "CASCADE"
 
 
 def test_expected_indexes_exist(_pg_engine):
@@ -466,6 +613,7 @@ def test_expected_indexes_exist(_pg_engine):
     index_names = {ix["name"] for ix in inspector.get_indexes("copilot_audits")}
 
     assert "ix_copilot_audits_alert_id" in index_names
+    assert "ix_copilot_audits_case_id" in index_names
     assert "ix_copilot_audits_created_at" in index_names
 
 
@@ -486,5 +634,6 @@ def test_expected_check_constraints_exist(_pg_engine):
         "ck_copilot_audits_duration_ms_non_negative",
         "ck_copilot_audits_history_turn_count_only_for_follow_up",
         "ck_copilot_audits_outcome_http_validation_consistency",
+        "ck_copilot_audits_exactly_one_scope",
     }
     assert expected <= constraint_names

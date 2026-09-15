@@ -24,6 +24,10 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.ai.case_context_builder import AICaseContextBuilder
+from app.ai.exceptions import AIProviderError
+from app.ai.factory import get_ai_provider
+from app.ai.provider import AIProvider
 from app.api.dependencies import AuthenticatedUser, get_current_user
 from app.core.database import get_db
 from app.models.case import Case
@@ -38,6 +42,9 @@ from app.repositories.case_audit import CaseAuditRepository
 from app.repositories.case_note import DEFAULT_LIST_LIMIT as NOTE_DEFAULT_LIST_LIMIT
 from app.repositories.case_note import MAX_LIST_LIMIT as NOTE_MAX_LIST_LIMIT
 from app.repositories.case_note import CaseNoteRepository
+from app.repositories.copilot_audit import DEFAULT_LIST_LIMIT as COPILOT_AUDIT_DEFAULT_LIST_LIMIT
+from app.repositories.copilot_audit import MAX_LIST_LIMIT as COPILOT_AUDIT_MAX_LIST_LIMIT
+from app.repositories.copilot_audit import CopilotAuditRepository
 from app.repositories.user import UserRepository
 from app.schemas.alert import AlertListResponse, AlertRead
 from app.schemas.case import (
@@ -56,7 +63,10 @@ from app.schemas.case import (
     CaseStatusUpdate,
     CaseUpdate,
 )
-from app.services.alert_service import AlertNotFoundError
+from app.schemas.case_ai import CaseCopilotQuestionRequest, CaseCopilotResponse
+from app.schemas.copilot_audit import CopilotAuditListResponse, CopilotAuditResponse
+from app.services.alert_service import AlertNotFoundError, AlertService
+from app.services.case_copilot_service import CaseCopilotService, FocusedAlertNotLinkedError
 from app.services.case_lifecycle import InvalidCaseStatusTransition
 from app.services.case_service import (
     AlertAlreadyLinkedError,
@@ -68,6 +78,12 @@ from app.services.case_service import (
     ClosureReasonRequiredError,
     InactiveCaseOwnerError,
 )
+from app.services.copilot_audit_service import (
+    CopilotAuditPersistenceError,
+    CopilotAuditService,
+    CopilotAuditValidationError,
+)
+from app.services.investigation_service import InvestigationEngine
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +99,32 @@ def get_case_service(db: Session = Depends(get_db)) -> CaseService:
         CaseNoteRepository(db),
         AlertRepository(db),
         UserRepository(db),
+    )
+
+
+def get_case_copilot_audit_service(db: Session = Depends(get_db)) -> CopilotAuditService:
+    """Step 13D: unlike app.api.alerts' own get_copilot_audit_service,
+    this ALWAYS supplies `case_repository` -- every call through this
+    dependency records/lists case-scoped rows, so
+    CopilotAuditService.record()'s case-existence check must be able to
+    run.
+    """
+    return CopilotAuditService(CopilotAuditRepository(db), AlertRepository(db), CaseRepository(db))
+
+
+def get_case_copilot_service(
+    db: Session = Depends(get_db),
+    case_service: CaseService = Depends(get_case_service),
+    provider: AIProvider = Depends(get_ai_provider),
+    copilot_audit_service: CopilotAuditService = Depends(get_case_copilot_audit_service),
+) -> CaseCopilotService:
+    return CaseCopilotService(
+        case_service=case_service,
+        alert_service=AlertService(AlertRepository(db)),
+        investigation_engine=InvestigationEngine(),
+        context_builder=AICaseContextBuilder(),
+        provider=provider,
+        copilot_audit_service=copilot_audit_service,
     )
 
 
@@ -321,3 +363,72 @@ def create_case_note(
     except CaseNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found") from exc
     return CaseNoteResponse.model_validate(note)
+
+
+@router.post("/{case_id}/copilot", response_model=CaseCopilotResponse)
+def ask_case_copilot(
+    case_id: uuid.UUID,
+    payload: CaseCopilotQuestionRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    service: CaseCopilotService = Depends(get_case_copilot_service),
+) -> CaseCopilotResponse:
+    """Step 13D: Generate Investigation Brief for this case. Explicit,
+    analyst-triggered only -- never automatic, never on page load, never
+    polled (there is no other route that calls CaseCopilotService).
+    Read-only: never changes the case's status/priority/owner or any
+    linked alert/note/audit row -- the AI layer is advisory only. See
+    CaseCopilotService.ask_about_case's own docstring for the full
+    context-construction, evidence-grounding, and N+1 guarantees.
+
+    `payload.focused_alert_id`, if supplied, MUST already be linked to
+    this case (cross-checked server-side against the case's own real
+    linked alerts) -- a client cannot smuggle another case's, or an
+    unrelated, alert's telemetry into this brief merely by naming its id;
+    an unlinked id is rejected with 422, never silently accepted or
+    substituted.
+    """
+    try:
+        return service.ask_about_case(case_id, payload.question, payload.focused_alert_id)
+    except CaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found") from exc
+    except FocusedAlertNotLinkedError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    except AIProviderError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.get("/{case_id}/copilot/audits", response_model=CopilotAuditListResponse)
+def list_case_copilot_audits(
+    case_id: uuid.UUID,
+    limit: int = Query(default=COPILOT_AUDIT_DEFAULT_LIST_LIMIT, ge=1, le=COPILOT_AUDIT_MAX_LIST_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    case_service: CaseService = Depends(get_case_service),
+    copilot_audit_service: CopilotAuditService = Depends(get_case_copilot_audit_service),
+) -> CopilotAuditListResponse:
+    """Step 13D: read-only, case-scoped retrieval of this case's Copilot
+    audit trail -- the exact same safe-metadata-only exposure boundary
+    GET /alerts/{alert_id}/copilot/audits already established (see
+    CopilotAuditResponse's own docstring). Never creates, updates, or
+    deletes an audit row; never invokes an AI provider.
+    """
+    try:
+        case_service.get_case(case_id)
+    except CaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found") from exc
+
+    try:
+        audits = copilot_audit_service.list_for_case(case_id, limit=limit, offset=offset)
+    except CopilotAuditValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    except CopilotAuditPersistenceError as exc:
+        logger.exception("Failed to retrieve Copilot audit records for case %s", case_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to retrieve Copilot audit records."
+        ) from exc
+
+    return CopilotAuditListResponse(
+        items=[CopilotAuditResponse.model_validate(audit) for audit in audits],
+        limit=limit,
+        offset=offset,
+    )

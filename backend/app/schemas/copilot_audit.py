@@ -28,14 +28,17 @@ from pydantic import BaseModel, ConfigDict
 
 
 class AuditRequestType(str, Enum):
-    """Which CopilotService method produced this call: ask() (an initial
-    structured assessment) or follow_up() (an alert-scoped follow-up
-    question). Matches app.models.copilot_audit's ck_copilot_audits_
-    request_type_valid.
+    """Which service method produced this call: CopilotService.ask() (an
+    initial alert-scoped structured assessment), CopilotService.follow_up()
+    (an alert-scoped follow-up question), or (Step 13D)
+    CaseCopilotService.ask_about_case() (a Case-scoped investigation
+    brief). Matches app.models.copilot_audit's
+    ck_copilot_audits_request_type_valid.
     """
 
     ASK = "ask"
     FOLLOW_UP = "follow_up"
+    CASE_BRIEF = "case_brief"
 
 
 class AuditOutcome(str, Enum):
@@ -84,7 +87,11 @@ class CopilotAuditResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    alert_id: uuid.UUID
+    # Exactly one of alert_id/case_id is set, mirroring
+    # app.models.copilot_audit's own ck_copilot_audits_exactly_one_scope
+    # (Step 13D) -- never both, never neither.
+    alert_id: uuid.UUID | None
+    case_id: uuid.UUID | None
     request_type: AuditRequestType
     provider_name: str
     model_name: str | None
@@ -99,12 +106,15 @@ class CopilotAuditResponse(BaseModel):
 
 
 class CopilotAuditListResponse(BaseModel):
-    """List envelope for GET /alerts/{alert_id}/copilot/audits. `items`
-    preserves whatever order CopilotAuditRepository.list_for_alert
-    already returned (newest-first, id DESC tie-break) — this schema
-    does not, and must never, re-sort anything. `limit`/`offset` echo
-    back exactly what was requested (post API-layer validation), not a
-    total count — no COUNT(*) query is performed for this milestone.
+    """List envelope for GET /alerts/{alert_id}/copilot/audits AND (Step
+    13D) GET /cases/{case_id}/copilot/audits -- one shared envelope
+    shape for both scopes, since CopilotAuditResponse itself already
+    carries whichever of alert_id/case_id is actually set. `items`
+    preserves whatever order CopilotAuditRepository.list_for_alert/
+    list_for_case already returned (newest-first, id DESC tie-break) —
+    this schema does not, and must never, re-sort anything. `limit`/
+    `offset` echo back exactly what was requested (post API-layer
+    validation), not a total count — no COUNT(*) query is performed.
     """
 
     model_config = ConfigDict(extra="forbid")
