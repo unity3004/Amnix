@@ -374,6 +374,76 @@ def test_multiple_audits_can_reference_the_same_case(db_session):
     assert reloaded_case is not None
 
 
+# --- case follow-up scope (Step 13E) --------------------------------------
+
+
+def test_valid_case_follow_up_audit_is_created(db_session):
+    case = _make_case(db_session)
+    audit = CopilotAudit(
+        **_valid_case_audit_kwargs(
+            case.id,
+            request_type="case_follow_up",
+            history_turn_count=2,
+            question_fingerprint=_fingerprint("what next?"),
+        )
+    )
+
+    db_session.add(audit)
+    db_session.commit()
+    db_session.refresh(audit)
+
+    assert audit.request_type == "case_follow_up"
+    assert audit.history_turn_count == 2
+
+
+def test_case_follow_up_history_turn_count_may_be_null_for_no_prior_turns(db_session):
+    case = _make_case(db_session)
+    audit = CopilotAudit(
+        **_valid_case_audit_kwargs(case.id, request_type="case_follow_up", history_turn_count=None)
+    )
+
+    db_session.add(audit)
+    db_session.commit()
+    db_session.refresh(audit)
+
+    assert audit.history_turn_count is None
+
+
+def test_case_follow_up_history_turn_count_may_be_zero(db_session):
+    case = _make_case(db_session)
+    audit = CopilotAudit(
+        **_valid_case_audit_kwargs(case.id, request_type="case_follow_up", history_turn_count=0)
+    )
+
+    db_session.add(audit)
+    db_session.commit()
+    db_session.refresh(audit)
+
+    assert audit.history_turn_count == 0
+
+
+def test_invalid_case_follow_up_request_type_variant_is_still_rejected(db_session):
+    """A near-miss string (not one of the four real vocabulary values)
+    is rejected exactly like any other invalid request_type."""
+    case = _make_case(db_session)
+    audit = CopilotAudit(**_valid_case_audit_kwargs(case.id, request_type="case_followup"))
+
+    with pytest.raises(IntegrityError):
+        with db_session.begin_nested():
+            db_session.add(audit)
+            db_session.flush()
+
+
+def test_case_follow_up_case_relationship_resolves_the_real_case(db_session):
+    case = _make_case(db_session)
+    audit = CopilotAudit(**_valid_case_audit_kwargs(case.id, request_type="case_follow_up", history_turn_count=1))
+    db_session.add(audit)
+    db_session.commit()
+    db_session.refresh(audit)
+
+    assert audit.case.id == case.id
+
+
 # --- Alert foreign-key relationship --------------------------------------
 
 

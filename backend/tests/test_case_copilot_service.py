@@ -25,10 +25,16 @@ from app.repositories.case_audit import CaseAuditRepository
 from app.repositories.case_note import CaseNoteRepository
 from app.repositories.copilot_audit import CopilotAuditRepository
 from app.repositories.user import UserRepository
-from app.schemas.ai import AIRequest, AIResponse, FindingType
+from app.schemas.ai import AIRequest, AIResponse, CopilotMessage, FindingType
 from app.schemas.alert import AlertCreate
 from app.schemas.case import CasePriority
-from app.schemas.case_ai import AICaseRequest, CaseEvidenceItem, CaseInvestigationBrief, CaseKeyFinding
+from app.schemas.case_ai import (
+    AICaseRequest,
+    CaseEvidenceItem,
+    CaseFollowUpAnswer,
+    CaseInvestigationBrief,
+    CaseKeyFinding,
+)
 from app.services.alert_service import AlertService
 from app.services.case_copilot_service import CaseCopilotService, FocusedAlertNotLinkedError
 from app.services.case_service import CaseNotFoundError, CaseService
@@ -54,6 +60,19 @@ def _valid_brief(**overrides) -> CaseInvestigationBrief:
     return CaseInvestigationBrief(**defaults)
 
 
+def _valid_follow_up_answer(**overrides) -> CaseFollowUpAnswer:
+    defaults = dict(
+        answer="A structured test follow-up answer.",
+        supporting_alert_refs=[],
+        supporting_event_refs=[],
+        mitre_analysis=[],
+        uncertainties=["No focused alert telemetry is available for a follow-up question."],
+        recommended_next_steps=[],
+    )
+    defaults.update(overrides)
+    return CaseFollowUpAnswer(**defaults)
+
+
 class _RecordingCaseAIProvider(AIProvider):
     """Records the AICaseRequest received and returns a fixed, valid
     CaseInvestigationBrief (as JSON) -- mirrors _RecordingAIProvider in
@@ -74,6 +93,27 @@ class _RecordingCaseAIProvider(AIProvider):
     def generate_case(self, request: AICaseRequest) -> AIResponse:
         self.last_request = request
         return AIResponse(content=self._brief.model_dump_json(), provider=self.name, model="test-model", usage=None)
+
+
+class _RecordingCaseFollowUpAIProvider(AIProvider):
+    """Follow-up counterpart to _RecordingCaseAIProvider: records the
+    AICaseRequest it received and returns a fixed, valid CaseFollowUpAnswer.
+    """
+
+    def __init__(self, answer: CaseFollowUpAnswer | None = None) -> None:
+        self.last_request: AICaseRequest | None = None
+        self._answer = answer or _valid_follow_up_answer()
+
+    @property
+    def name(self) -> str:
+        return "recording-case-follow-up-test-double"
+
+    def generate(self, request: AIRequest) -> AIResponse:
+        raise AssertionError("generate() (alert-scoped) must never be called by CaseCopilotService")
+
+    def generate_case(self, request: AICaseRequest) -> AIResponse:
+        self.last_request = request
+        return AIResponse(content=self._answer.model_dump_json(), provider=self.name, model="test-model", usage=None)
 
 
 class _FailingCaseAIProvider(AIProvider):
@@ -458,3 +498,269 @@ def test_never_creates_a_case_note_or_links_an_alert(db_session, actor_id):
 
     assert CaseNoteRepository(db_session).list_for_case(case.id) == []
     assert CaseAlertRepository(db_session).list_alerts_for_case(case.id) == []
+
+
+# =============================================================================
+# Step 13E: ask_case_follow_up
+# =============================================================================
+
+
+def test_follow_up_unknown_case_raises_case_not_found(db_session):
+    provider = _RecordingCaseFollowUpAIProvider()
+    service = _make_service(db_session, provider)
+
+    with pytest.raises(CaseNotFoundError):
+        service.ask_case_follow_up(uuid.uuid4(), "Why?", [])
+
+
+def test_follow_up_sends_real_case_fields_no_focused_alert_ever(db_session, actor_id):
+    case = _make_case(db_session, actor_id, title="Real case title", priority=CasePriority.HIGH)
+    event = _make_event(db_session)
+    alert = _make_alert(db_session, [event.id], rule_id="brute_force_authentication")
+    _link_alert(db_session, case.id, alert.id, actor_id)
+
+    provider = _RecordingCaseFollowUpAIProvider()
+    service = _make_service(db_session, provider)
+
+    service.ask_case_follow_up(case.id, "What happened next?", [])
+
+    assert provider.last_request is not None
+    ctx = provider.last_request.context
+    assert ctx.case_id == case.id
+    assert ctx.title == "Real case title"
+    assert len(ctx.alerts) == 1
+    # A Case-scoped follow-up NEVER has a focused alert -- the endpoint
+    # accepts no focused_alert_id at all (Step 13E Phase 2).
+    assert ctx.focused_alert is None
+
+
+def test_follow_up_signature_accepts_only_case_id_question_and_history(db_session):
+    """The context is entirely server-reconstructed from case_id -- there
+    is no code path in ask_case_follow_up()'s signature that accepts
+    evidence/notes/audit/MITRE/focused_alert_id from the caller.
+    """
+    import inspect
+
+    sig = inspect.signature(CaseCopilotService.ask_case_follow_up)
+    assert set(sig.parameters) == {"self", "case_id", "question", "history"}
+
+
+def test_follow_up_conversation_history_is_mapped_to_the_provider_request(db_session, actor_id):
+    case = _make_case(db_session, actor_id)
+    provider = _RecordingCaseFollowUpAIProvider()
+    service = _make_service(db_session, provider)
+    history = [
+        CopilotMessage(role="user", content="Why is this suspicious?"),
+        CopilotMessage(role="assistant", content="Because of repeated failures."),
+    ]
+
+    service.ask_case_follow_up(case.id, "What next?", history)
+
+    sent_history = provider.last_request.conversation_history
+    assert sent_history is not None
+    assert [t.role.value for t in sent_history] == ["user", "assistant"]
+    assert [t.content for t in sent_history] == ["Why is this suspicious?", "Because of repeated failures."]
+
+
+def test_follow_up_with_empty_history_still_sends_a_list_not_none(db_session, actor_id):
+    """An empty list (an analyst's first follow-up with no prior turns)
+    must still be distinguishable from the initial-brief request's `None`
+    -- see AICaseRequest's own None-vs-list mode discriminator docstring.
+    """
+    case = _make_case(db_session, actor_id)
+    provider = _RecordingCaseFollowUpAIProvider()
+    service = _make_service(db_session, provider)
+
+    service.ask_case_follow_up(case.id, "What next?", [])
+
+    assert provider.last_request.conversation_history == []
+
+
+def test_follow_up_rejects_a_fabricated_alert_ref_not_in_this_cases_context(db_session, actor_id):
+    case = _make_case(db_session, actor_id)
+    answer = _valid_follow_up_answer(supporting_alert_refs=["alert-99"])
+    provider = _RecordingCaseFollowUpAIProvider(answer)
+    service = _make_service(db_session, provider)
+
+    with pytest.raises(AIProviderValidationError):
+        service.ask_case_follow_up(case.id, "Why?", [])
+
+
+def test_follow_up_rejects_any_event_ref_since_no_focused_alert_ever_exists(db_session, actor_id):
+    """Even a real-looking event_ref must be rejected: a Case-scoped
+    follow-up never has a focused_alert, so the known-event-ref set is
+    always empty (see _reject_fabricated_refs)."""
+    case = _make_case(db_session, actor_id)
+    event = _make_event(db_session)
+    alert = _make_alert(db_session, [event.id])
+    _link_alert(db_session, case.id, alert.id, actor_id)
+    answer = _valid_follow_up_answer(supporting_event_refs=["evt-1"])
+    provider = _RecordingCaseFollowUpAIProvider(answer)
+    service = _make_service(db_session, provider)
+
+    with pytest.raises(AIProviderValidationError):
+        service.ask_case_follow_up(case.id, "Why?", [])
+
+
+def test_follow_up_rejects_a_mitre_technique_id_outside_the_case_wide_candidate_set(db_session, actor_id):
+    from app.schemas.ai import AssessmentConfidence, MitreAnalysisEntry
+
+    case = _make_case(db_session, actor_id)
+    event = _make_event(db_session)
+    alert = _make_alert(db_session, [event.id], rule_id="brute_force_authentication")
+    _link_alert(db_session, case.id, alert.id, actor_id)
+
+    answer = _valid_follow_up_answer(
+        mitre_analysis=[
+            MitreAnalysisEntry(
+                technique_id="T9999", technique_name="Fabricated", tactic="Fabricated",
+                confidence=AssessmentConfidence.HIGH, rationale="fabricated", supporting_event_refs=[],
+            )
+        ]
+    )
+    provider = _RecordingCaseFollowUpAIProvider(answer)
+    service = _make_service(db_session, provider)
+
+    with pytest.raises(AIProviderValidationError):
+        service.ask_case_follow_up(case.id, "Why?", [])
+
+
+def test_follow_up_normalizes_technique_name_and_tactic_to_registry_canonical_values(db_session, actor_id):
+    from app.mitre.registry import get_techniques_for_rule
+    from app.schemas.ai import AssessmentConfidence, MitreAnalysisEntry
+
+    case = _make_case(db_session, actor_id)
+    event = _make_event(db_session)
+    alert = _make_alert(db_session, [event.id], rule_id="brute_force_authentication")
+    _link_alert(db_session, case.id, alert.id, actor_id)
+    real_candidate = get_techniques_for_rule("brute_force_authentication")[0]
+
+    answer = _valid_follow_up_answer(
+        mitre_analysis=[
+            MitreAnalysisEntry(
+                technique_id=real_candidate.technique_id, technique_name="WRONG NAME", tactic="WRONG TACTIC",
+                confidence=AssessmentConfidence.MEDIUM, rationale="test", supporting_event_refs=[],
+            )
+        ]
+    )
+    provider = _RecordingCaseFollowUpAIProvider(answer)
+    service = _make_service(db_session, provider)
+
+    response = service.ask_case_follow_up(case.id, "Why?", [])
+
+    assert response.mitre_analysis[0].technique_name == real_candidate.name
+    assert response.mitre_analysis[0].tactic == real_candidate.tactic
+
+
+def test_follow_up_provider_transport_failure_raises_and_records_a_failure_audit(db_session, actor_id):
+    case = _make_case(db_session, actor_id)
+    provider = _FailingCaseAIProvider()
+    service = _make_service(db_session, provider)
+
+    with pytest.raises(AIProviderTransportError):
+        service.ask_case_follow_up(case.id, "Why?", [])
+
+    audits = CopilotAuditRepository(db_session).list_for_case(case.id)
+    assert len(audits) == 1
+    assert audits[0].outcome == "failure"
+    assert audits[0].validation_status == "not_applicable"
+    assert audits[0].http_status == 502
+    assert audits[0].case_id == case.id
+    assert audits[0].alert_id is None
+    assert audits[0].request_type == "case_follow_up"
+
+
+def test_follow_up_malformed_provider_output_raises_and_records_a_failed_validation_audit(db_session, actor_id):
+    case = _make_case(db_session, actor_id)
+    provider = _MalformedJSONCaseAIProvider()
+    service = _make_service(db_session, provider)
+
+    with pytest.raises(AIProviderValidationError):
+        service.ask_case_follow_up(case.id, "Why?", [])
+
+    audits = CopilotAuditRepository(db_session).list_for_case(case.id)
+    assert len(audits) == 1
+    assert audits[0].outcome == "failure"
+    assert audits[0].validation_status == "failed"
+    assert audits[0].request_type == "case_follow_up"
+
+
+def test_follow_up_successful_call_records_exactly_one_success_audit_with_history_turn_count(db_session, actor_id):
+    case = _make_case(db_session, actor_id)
+    provider = _RecordingCaseFollowUpAIProvider()
+    service = _make_service(db_session, provider)
+    history = [
+        CopilotMessage(role="user", content="Why is this suspicious?"),
+        CopilotMessage(role="assistant", content="Because of repeated failures."),
+    ]
+
+    service.ask_case_follow_up(case.id, "What next?", history)
+
+    audits = CopilotAuditRepository(db_session).list_for_case(case.id)
+    assert len(audits) == 1
+    assert audits[0].outcome == "success"
+    assert audits[0].validation_status == "passed"
+    assert audits[0].http_status == 200
+    assert audits[0].request_type == "case_follow_up"
+    assert audits[0].history_turn_count == 2
+
+
+def test_follow_up_and_brief_each_record_their_own_audit_row(db_session, actor_id):
+    case = _make_case(db_session, actor_id)
+    brief_provider = _RecordingCaseAIProvider()
+    follow_up_provider = _RecordingCaseFollowUpAIProvider()
+
+    _make_service(db_session, brief_provider).ask_about_case(case.id, "Why?")
+    _make_service(db_session, follow_up_provider).ask_case_follow_up(case.id, "What next?", [])
+
+    audits = CopilotAuditRepository(db_session).list_for_case(case.id)
+    assert len(audits) == 2
+    request_types = {a.request_type for a in audits}
+    assert request_types == {"case_brief", "case_follow_up"}
+
+
+def test_follow_up_never_changes_case_status_priority_or_owner(db_session, actor_id):
+    case = _make_case(db_session, actor_id, priority=CasePriority.LOW)
+    provider = _RecordingCaseFollowUpAIProvider()
+    service = _make_service(db_session, provider)
+
+    service.ask_case_follow_up(case.id, "Should I close this case?", [])
+
+    reloaded = CaseRepository(db_session).get_by_id(case.id)
+    assert reloaded.status == "OPEN"
+    assert reloaded.priority == "low"
+    assert reloaded.owner_id is None
+
+
+def test_follow_up_never_creates_a_case_note_or_links_an_alert(db_session, actor_id):
+    case = _make_case(db_session, actor_id)
+    provider = _RecordingCaseFollowUpAIProvider()
+    service = _make_service(db_session, provider)
+
+    service.ask_case_follow_up(case.id, "Document this for me.", [])
+
+    assert CaseNoteRepository(db_session).list_for_case(case.id) == []
+    assert CaseAlertRepository(db_session).list_alerts_for_case(case.id) == []
+
+
+def test_follow_up_reflects_case_changes_between_turns(db_session, actor_id):
+    """CASE ISOLATION: each follow-up rebuilds the context fresh -- a note
+    added between two turns of the same conversation must appear in the
+    second turn's context even though nothing about the conversation
+    itself changed.
+    """
+    case = _make_case(db_session, actor_id)
+    provider = _RecordingCaseFollowUpAIProvider()
+    service = _make_service(db_session, provider)
+
+    service.ask_case_follow_up(case.id, "First question.", [])
+    assert len(provider.last_request.context.notes) == 0
+
+    case_service = CaseService(
+        db_session, CaseRepository(db_session), CaseAlertRepository(db_session), CaseAuditRepository(db_session),
+        CaseNoteRepository(db_session), AlertRepository(db_session), UserRepository(db_session),
+    )
+    case_service.add_note(case.id, body="A note added between turns.", actor_id=actor_id)
+
+    service.ask_case_follow_up(case.id, "Second question.", [])
+    assert len(provider.last_request.context.notes) == 1

@@ -76,9 +76,15 @@ enforce referential integrity for whichever one is set, which a single
 untyped `scope_id` column could not.
 `request_type` gains a third value, 'case_brief' — the Case-scoped
 counterpart to 'ask' — which, like 'ask', never carries conversation
-history (Step 13D's approved scope is single-shot only; see
-app.schemas.case_ai.AICaseRequest's own docstring for why follow-up is
-deferred).
+history.
+
+Step 13E adds a fourth value, 'case_follow_up' — the Case-scoped
+counterpart to 'follow_up' — which, like 'follow_up', always carries a
+(possibly empty) conversation_history list. This required widening
+`ck_copilot_audits_request_type_valid` and
+`ck_copilot_audits_history_turn_count_only_for_follow_up` a second time
+(see the Step 13D migration for the first widening) — an additive-only
+change, exactly the same drop+recreate-CHECK-constraint pattern.
 """
 
 import uuid
@@ -106,7 +112,8 @@ class CopilotAudit(Base):
         Index("ix_copilot_audits_case_id", "case_id"),
         Index("ix_copilot_audits_created_at", "created_at"),
         CheckConstraint(
-            "request_type IN ('ask', 'follow_up', 'case_brief')", name="ck_copilot_audits_request_type_valid"
+            "request_type IN ('ask', 'follow_up', 'case_brief', 'case_follow_up')",
+            name="ck_copilot_audits_request_type_valid",
         ),
         CheckConstraint(
             "(alert_id IS NOT NULL AND case_id IS NULL) OR (alert_id IS NULL AND case_id IS NOT NULL)",
@@ -140,12 +147,15 @@ class CopilotAudit(Base):
         CheckConstraint("duration_ms IS NULL OR duration_ms >= 0", name="ck_copilot_audits_duration_ms_non_negative"),
         # An initial ask() has no conversation history at all (see
         # AIRequest's None-vs-list mode discriminator), and neither does
-        # case_brief (AICaseRequest has no conversation_history field at
-        # all — see that schema's own docstring) — history_turn_count
-        # must be NULL for both 'ask' and 'case_brief' rows, and is free
-        # to be NULL (no prior turns) or >= 0 for 'follow_up' rows.
+        # case_brief (AICaseRequest.conversation_history is None for that
+        # call — see app.schemas.case_ai's own docstring) —
+        # history_turn_count must be NULL for both 'ask' and 'case_brief'
+        # rows, and is free to be NULL (no prior turns) or >= 0 for
+        # 'follow_up' and (Step 13E) 'case_follow_up' rows, both of which
+        # always carry a (possibly empty) conversation_history list.
         CheckConstraint(
-            "(request_type IN ('ask', 'case_brief') AND history_turn_count IS NULL) OR (request_type = 'follow_up')",
+            "(request_type IN ('ask', 'case_brief') AND history_turn_count IS NULL) "
+            "OR (request_type IN ('follow_up', 'case_follow_up'))",
             name="ck_copilot_audits_history_turn_count_only_for_follow_up",
         ),
         # Ties the three outcome axes together for CopilotService's
@@ -177,8 +187,10 @@ class CopilotAudit(Base):
     # 'ask' == CopilotService.ask() (initial structured assessment),
     # 'follow_up' == CopilotService.follow_up() (alert-scoped follow-up
     # conversation), 'case_brief' == CaseCopilotService.ask_about_case()
-    # (Step 13D, Case-scoped investigation brief) — see
-    # app.services.copilot_service / app.services.case_copilot_service.
+    # (Step 13D, Case-scoped investigation brief), 'case_follow_up' ==
+    # CaseCopilotService.ask_case_follow_up() (Step 13E, Case-scoped
+    # follow-up conversation) — see app.services.copilot_service /
+    # app.services.case_copilot_service.
     request_type: Mapped[str] = mapped_column(String(20), nullable=False)
 
     # Open vocabulary by design (matches AIProvider.name / the model

@@ -197,7 +197,9 @@ class CopilotAuditService:
             raise CopilotAuditValidationError("duration_ms must be non-negative")
 
         fingerprint = self.compute_fingerprint(request_type, question, history)
-        history_turn_count = len(history) if request_type is AuditRequestType.FOLLOW_UP else None
+        history_turn_count = (
+            len(history) if request_type in (AuditRequestType.FOLLOW_UP, AuditRequestType.CASE_FOLLOW_UP) else None
+        )
 
         audit = CopilotAudit(
             alert_id=alert_id,

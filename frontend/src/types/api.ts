@@ -383,6 +383,41 @@ export interface CaseCopilotResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Case Copilot follow-up conversation (app/schemas/case_ai.py) -- Step 13E
+// ---------------------------------------------------------------------------
+
+/** Deliberately accepts ONLY `question` and `history` -- no
+ * `focused_alert_id` (a Case-scoped follow-up never has a focused alert;
+ * see CaseCopilotService.ask_case_follow_up's own docstring). `history`
+ * reuses CopilotMessage verbatim, same as the alert-scoped follow-up
+ * request.
+ */
+export interface CaseCopilotFollowUpRequest {
+  question: string
+  history: CopilotMessage[]
+}
+
+/** Deliberately has NO verdict/confidence field, for the identical
+ * reason CaseInvestigationBrief has none. `supporting_event_refs` is
+ * always empty in practice (no focused alert exists in a follow-up
+ * request), but the field still exists so the shape stays parallel to
+ * the initial brief's own evidence fields.
+ */
+export interface CaseCopilotFollowUpResponse {
+  case_id: string
+  provider: string
+  model: string
+  answer: string
+  generated_at: string
+  supporting_alert_refs: string[]
+  supporting_event_refs: string[]
+  mitre_analysis: CopilotMitreAnalysisEntry[]
+  uncertainties: string[]
+  recommended_next_steps: string[]
+  usage: Record<string, unknown> | null
+}
+
+// ---------------------------------------------------------------------------
 // Admin Audits (app/schemas/admin_audit.py)
 // ---------------------------------------------------------------------------
 

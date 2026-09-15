@@ -3,6 +3,8 @@ import type {
   AlertListResponse,
   AlertRead,
   CaseAuditListResponse,
+  CaseCopilotFollowUpRequest,
+  CaseCopilotFollowUpResponse,
   CaseCopilotQuestionRequest,
   CaseCopilotResponse,
   CaseCreate,
@@ -104,6 +106,21 @@ export function createCaseNote(caseId: string, body: string): Promise<CaseNoteRe
  */
 export function askCaseCopilot(caseId: string, payload: CaseCopilotQuestionRequest): Promise<CaseCopilotResponse> {
   return apiRequest<CaseCopilotResponse>(`/cases/${caseId}/copilot`, { method: 'POST', body: payload, auth: true })
+}
+
+/** POST /cases/{id}/copilot/follow-up (Step 13E) -- explicit,
+ * analyst-triggered follow-up question only. Never called automatically;
+ * see useCaseCopilot, the only caller.
+ */
+export function askCaseCopilotFollowUp(
+  caseId: string,
+  payload: CaseCopilotFollowUpRequest,
+): Promise<CaseCopilotFollowUpResponse> {
+  return apiRequest<CaseCopilotFollowUpResponse>(`/cases/${caseId}/copilot/follow-up`, {
+    method: 'POST',
+    body: payload,
+    auth: true,
+  })
 }
 
 export function getCaseCopilotAudits(

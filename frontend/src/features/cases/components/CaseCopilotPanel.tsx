@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Bot, Loader2, Sparkles } from 'lucide-react'
+import { Bot, Loader2, Send, Sparkles } from 'lucide-react'
 import { CardHeader } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -9,9 +9,11 @@ import { ApiError } from '@/services/httpClient'
 import { useInvestigation } from '@/features/investigation/useInvestigation'
 import { buildEventRefMap } from '@/features/investigation/eventRefMap'
 import { buildAlertRefMap } from '../caseAlertRefMap'
-import { useCaseCopilot } from '../useCaseCopilot'
+import { useCaseCopilot, type CaseConversationTurn } from '../useCaseCopilot'
+import { CaseQuestionStarters } from './CaseQuestionStarters'
 import type {
   AlertRead,
+  CaseCopilotFollowUpResponse,
   CaseEvidenceItem,
   CaseInvestigationBrief,
   CaseKeyFinding,
@@ -123,7 +125,15 @@ function SupportingEvidenceSection({
   )
 }
 
-function MitreSection({ entries, eventRefMap }: { entries: CopilotMitreAnalysisEntry[]; eventRefMap: Map<string, string> }) {
+function MitreSection({
+  entries,
+  alertRefMap,
+  eventRefMap,
+}: {
+  entries: CopilotMitreAnalysisEntry[]
+  alertRefMap: Map<string, string>
+  eventRefMap: Map<string, string>
+}) {
   if (entries.length === 0) return null
   return (
     <div className="mt-3">
@@ -139,7 +149,7 @@ function MitreSection({ entries, eventRefMap }: { entries: CopilotMitreAnalysisE
             </div>
             <p className="mt-0.5">{entry.rationale}</p>
             <div className="mt-1">
-              <RefLinks eventRefs={entry.supporting_event_refs} alertRefMap={new Map()} eventRefMap={eventRefMap} />
+              <RefLinks eventRefs={entry.supporting_event_refs} alertRefMap={alertRefMap} eventRefMap={eventRefMap} />
             </div>
           </li>
         ))}
@@ -148,7 +158,16 @@ function MitreSection({ entries, eventRefMap }: { entries: CopilotMitreAnalysisE
   )
 }
 
-function InvestigationBrief({
+function TrustNotice() {
+  return (
+    <p className="mt-1 text-[11px] italic text-fg-subtle">
+      AI-generated · Advisory only. Responses are grounded in this case's real evidence -- AMNIX never executes
+      actions or changes this case automatically. Verify conclusions against the underlying evidence before acting.
+    </p>
+  )
+}
+
+function InitialBriefCard({
   brief,
   alertRefMap,
   eventRefMap,
@@ -163,15 +182,12 @@ function InvestigationBrief({
         <Sparkles className="size-3.5 text-accent-strong" strokeWidth={1.75} aria-hidden="true" />
         <p className="text-[11px] uppercase tracking-wide text-fg-subtle">Generated Brief</p>
       </div>
-      <p className="mt-1 text-[11px] italic text-fg-subtle">
-        AI-generated, advisory only. AMNIX does not act on this automatically -- verify against the real evidence above
-        before taking any action.
-      </p>
+      <TrustNotice />
       <p className="mt-2 text-sm text-fg">{brief.summary}</p>
 
       <KeyFindingsSection findings={brief.key_findings} alertRefMap={alertRefMap} eventRefMap={eventRefMap} />
       <SupportingEvidenceSection evidence={brief.supporting_evidence} alertRefMap={alertRefMap} eventRefMap={eventRefMap} />
-      <MitreSection entries={brief.mitre_analysis} eventRefMap={eventRefMap} />
+      <MitreSection entries={brief.mitre_analysis} alertRefMap={alertRefMap} eventRefMap={eventRefMap} />
 
       <div className="mt-3">
         <p className="text-[11px] uppercase tracking-wide text-fg-subtle">Timeline Summary</p>
@@ -204,47 +220,150 @@ function InvestigationBrief({
   )
 }
 
-/** Step 13D: the Case-scoped "Generate Investigation Brief" panel --
+function FollowUpAnswerCard({ response, alertRefMap }: { response: CaseCopilotFollowUpResponse; alertRefMap: Map<string, string> }) {
+  const emptyEventRefMap = new Map<string, string>()
+  return (
+    <div className="rounded-md border border-border-strong bg-surface-elevated p-3">
+      <p className="text-sm text-fg">{response.answer}</p>
+
+      {response.supporting_alert_refs.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[11px] uppercase tracking-wide text-fg-subtle">Evidence</p>
+          <div className="mt-1">
+            <RefLinks alertRefs={response.supporting_alert_refs} alertRefMap={alertRefMap} eventRefMap={emptyEventRefMap} />
+          </div>
+        </div>
+      )}
+
+      <MitreSection entries={response.mitre_analysis} alertRefMap={alertRefMap} eventRefMap={emptyEventRefMap} />
+
+      {response.uncertainties.length > 0 && (
+        <div className="mt-3 border-t border-border pt-2">
+          <p className="text-[11px] uppercase tracking-wide text-fg-subtle">Uncertainties</p>
+          <ul className="mt-1 list-inside list-disc text-xs text-fg-subtle">
+            {response.uncertainties.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {response.recommended_next_steps.length > 0 && (
+        <div className="mt-3 border-t border-border pt-2">
+          <p className="text-[11px] uppercase tracking-wide text-fg-subtle">Recommended Next Steps</p>
+          <p className="mt-0.5 text-[10px] italic text-fg-subtle">Analyst guidance only -- no actions are executed automatically.</p>
+          <ul className="mt-1 list-inside list-disc text-xs text-fg-muted">
+            {response.recommended_next_steps.map((step, i) => (
+              <li key={i}>{step}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SenderLabel({ who }: { who: 'Analyst' | 'Copilot' }) {
+  return <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-fg-subtle">{who}</p>
+}
+
+function ConversationTurnView({
+  turn,
+  alertRefMap,
+  eventRefMap,
+}: {
+  turn: CaseConversationTurn
+  alertRefMap: Map<string, string>
+  eventRefMap: Map<string, string>
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div>
+        <SenderLabel who="Analyst" />
+        <p className="rounded-md bg-bg-inset px-3 py-2 text-sm text-fg-muted">{turn.question}</p>
+      </div>
+      <div>
+        <SenderLabel who="Copilot" />
+        {turn.kind === 'initial' ? (
+          <InitialBriefCard brief={turn.brief} alertRefMap={alertRefMap} eventRefMap={eventRefMap} />
+        ) : (
+          <FollowUpAnswerCard response={turn.response} alertRefMap={alertRefMap} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Step 13D/13E: the Case-scoped AI Copilot conversation panel --
  * explicit, analyst-triggered only (see useCaseCopilot: nothing here
- * calls POST /cases/{id}/copilot until the button below is clicked).
- * Deliberately separate from CaseSummaryPanel (Step 13C, deterministic,
- * application-generated): this panel is visually and semantically marked
- * as AI-generated advisory output (accent border, Sparkles icon, and a
- * mandatory trust notice on every rendered brief), never the reverse.
+ * calls an AI endpoint until "Generate Investigation Brief" or "Ask" is
+ * clicked). Deliberately separate from CaseSummaryPanel (Step 13C,
+ * deterministic, application-generated): every AI-generated card in this
+ * panel carries its own "AI-generated · Advisory only" trust notice and
+ * accent-bordered styling, never the reverse.
  *
- * READY/GENERATING/SUCCESS/FAILURE map directly to useCaseCopilot's own
- * `status` ('idle'/'pending'/'success'/'error') -- there is no separate
- * loading state that could show fabricated content while a request is
- * in flight.
+ * READY/GENERATING/SUCCESS/FAILURE/FOLLOW-UP-IN-PROGRESS map directly to
+ * useCaseCopilot's own mutation state -- there is no separate loading
+ * state that could show fabricated content while a request is in
+ * flight.
  *
- * The optional focused-alert selector mirrors CaseTimelinePanel's own
- * pattern exactly: GET /alerts/{id}/investigation is fetched (via
+ * The optional focused-alert selector (only offered before the first
+ * "Generate Investigation Brief" click) mirrors CaseTimelinePanel's own
+ * pattern: GET /alerts/{id}/investigation is fetched (via
  * useInvestigation) only when the analyst picks one of this case's own
- * REAL linked alerts, purely to resolve this brief's `evt-N` references
- * into real Event Detail links -- never to send that telemetry back to
- * the server (the server reconstructs its own copy from `case_id` +
- * `focused_alert_id` alone; see CaseCopilotQuestionRequest's own
- * docstring). Never fetched automatically, never looped across every
- * linked alert.
+ * REAL linked alerts, purely to resolve the initial brief's `evt-N`
+ * references into real Event Detail links. Follow-up questions never
+ * offer a focused-alert selector at all -- the follow-up endpoint
+ * accepts no `focused_alert_id` (see CaseCopilotService.ask_case_follow_up),
+ * so a follow-up answer can only ever cite `alert-N` references.
  *
- * Generating a brief never creates a Case Note, never links/unlinks an
- * alert, and never changes case status/priority/owner -- there is no
- * code path here that calls any of those endpoints.
+ * Network architecture: zero requests on mount, exactly one per Generate
+ * click, exactly one per Ask click -- generate()/ask() are the only two
+ * functions in useCaseCopilot that call an AI endpoint, and both are
+ * wired to nothing but this panel's own button handlers.
+ *
+ * Nothing here ever creates a Case Note, links/unlinks an alert, or
+ * changes case status/priority/owner.
  */
 export function CaseCopilotPanel({ caseId, alerts }: { caseId: string; alerts: AlertRead[] }) {
   const [question, setQuestion] = useState('')
+  const [followUpQuestion, setFollowUpQuestion] = useState('')
   const [focusedAlertId, setFocusedAlertId] = useState<string | undefined>(undefined)
-  const { generate, status, data, error, reset } = useCaseCopilot(caseId)
+  const {
+    turns,
+    hasGenerated,
+    generate,
+    ask,
+    isGenerating,
+    isAsking,
+    generateError,
+    followUpError,
+    retryGenerate,
+    retryAsk,
+    reset,
+  } = useCaseCopilot(caseId)
   const investigationQuery = useInvestigation(focusedAlertId)
 
   const alertRefMap = buildAlertRefMap(alerts)
   const eventRefMap = investigationQuery.data ? buildEventRefMap(investigationQuery.data.timeline) : new Map<string, string>()
 
-  const isGenerating = status === 'pending'
-
-  function submit() {
+  function submitGenerate() {
     if (!question.trim() || isGenerating) return
     generate(question.trim(), focusedAlertId ?? null)
+    setQuestion('')
+  }
+
+  function submitFollowUp() {
+    if (!followUpQuestion.trim() || isAsking) return
+    ask(followUpQuestion.trim())
+    setFollowUpQuestion('')
+  }
+
+  function clear() {
+    reset()
+    setQuestion('')
+    setFollowUpQuestion('')
+    setFocusedAlertId(undefined)
   }
 
   return (
@@ -252,49 +371,56 @@ export function CaseCopilotPanel({ caseId, alerts }: { caseId: string; alerts: A
       <CardHeader title="AI Investigation Brief" subtitle="AI-assisted reasoning, scoped to this case -- generated only when you ask." />
 
       <div className="px-5 pb-4">
-        {alerts.length > 0 && (
-          <div className="mb-3">
-            <label htmlFor="case-copilot-alert-select" className="text-[11px] uppercase tracking-wide text-fg-subtle">
-              Focus on alert (optional)
+        {!hasGenerated && (
+          <>
+            {alerts.length > 0 && (
+              <div className="mb-3">
+                <label htmlFor="case-copilot-alert-select" className="text-[11px] uppercase tracking-wide text-fg-subtle">
+                  Focus on alert (optional)
+                </label>
+                <select
+                  id="case-copilot-alert-select"
+                  value={focusedAlertId ?? ''}
+                  onChange={(e) => setFocusedAlertId(e.target.value || undefined)}
+                  disabled={isGenerating}
+                  className="mt-1.5 h-9 w-full rounded-md border border-border bg-surface px-2 text-sm text-fg focus:border-accent/50 focus:outline-none sm:w-auto"
+                >
+                  <option value="">— none selected —</option>
+                  {alerts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.title} ({a.severity})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            <div className="mb-2">
+              <CaseQuestionStarters onSelect={setQuestion} disabled={isGenerating} />
+            </div>
+            <label htmlFor="case-copilot-question" className="mb-1.5 block text-xs font-medium text-fg-muted">
+              Ask about this case
             </label>
-            <select
-              id="case-copilot-alert-select"
-              value={focusedAlertId ?? ''}
-              onChange={(e) => setFocusedAlertId(e.target.value || undefined)}
+            <textarea
+              id="case-copilot-question"
+              rows={2}
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
               disabled={isGenerating}
-              className="mt-1.5 h-9 w-full rounded-md border border-border bg-surface px-2 text-sm text-fg focus:border-accent/50 focus:outline-none sm:w-auto"
-            >
-              <option value="">— none selected —</option>
-              {alerts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.title} ({a.severity})
-                </option>
-              ))}
-            </select>
-          </div>
+              placeholder="What happened across these linked alerts? What should I investigate next?"
+              className="w-full resize-none rounded-md border border-border bg-bg-inset px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:border-accent/50 focus:outline-none"
+            />
+            <div className="mt-2 flex justify-end">
+              <Button variant="primary" size="sm" disabled={!question.trim() || isGenerating} onClick={submitGenerate}>
+                <Sparkles className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                {isGenerating ? 'Generating…' : 'Generate Investigation Brief'}
+              </Button>
+            </div>
+          </>
         )}
 
-        <label htmlFor="case-copilot-question" className="mb-1.5 block text-xs font-medium text-fg-muted">
-          Ask about this case
-        </label>
-        <textarea
-          id="case-copilot-question"
-          rows={2}
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          disabled={isGenerating}
-          placeholder="What happened across these linked alerts? What should I investigate next?"
-          className="w-full resize-none rounded-md border border-border bg-bg-inset px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:border-accent/50 focus:outline-none"
-        />
-        <div className="mt-2 flex justify-end">
-          <Button variant="primary" size="sm" disabled={!question.trim() || isGenerating} onClick={submit}>
-            <Sparkles className="size-3.5" strokeWidth={2} aria-hidden="true" />
-            {isGenerating ? 'Generating…' : 'Generate Investigation Brief'}
-          </Button>
-        </div>
-
         <div className="mt-4">
-          {status === 'idle' && (
+          {!hasGenerated && !isGenerating && !generateError && (
             <EmptyState
               icon={Bot}
               title="No brief generated yet."
@@ -302,29 +428,74 @@ export function CaseCopilotPanel({ caseId, alerts }: { caseId: string; alerts: A
             />
           )}
 
-          {isGenerating && (
+          {isGenerating && !hasGenerated && (
             <div className="flex items-center gap-2 text-xs text-fg-subtle" role="status">
               <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
               Generating investigation brief…
             </div>
           )}
 
-          {status === 'error' && (
+          {generateError !== null && !hasGenerated && (
             <ErrorState
               title="Investigation Brief is unavailable"
-              message={error instanceof ApiError ? error.message : 'Unable to reach the AMNIX backend.'}
-              onRetry={() => submit()}
+              message={generateError instanceof ApiError ? generateError.message : 'Unable to reach the AMNIX backend.'}
+              onRetry={retryGenerate}
             />
           )}
 
-          {status === 'success' && data && (
-            <InvestigationBrief brief={data.brief} alertRefMap={alertRefMap} eventRefMap={eventRefMap} />
+          {hasGenerated && (
+            <div className="flex flex-col gap-4">
+              {turns.map((turn, i) => (
+                <ConversationTurnView key={i} turn={turn} alertRefMap={alertRefMap} eventRefMap={eventRefMap} />
+              ))}
+
+              {isAsking && (
+                <div className="flex items-center gap-2 text-xs text-fg-subtle" role="status">
+                  <Loader2 className="size-3.5 animate-spin" strokeWidth={2} aria-hidden="true" />
+                  Generating follow-up answer…
+                </div>
+              )}
+
+              {followUpError !== null && (
+                <ErrorState
+                  title="Follow-up is unavailable"
+                  message={followUpError instanceof ApiError ? followUpError.message : 'Unable to reach the AMNIX backend.'}
+                  onRetry={retryAsk}
+                />
+              )}
+            </div>
           )}
         </div>
 
-        {status !== 'idle' && (
+        {hasGenerated && (
+          <div className="mt-4 border-t border-border pt-4">
+            <div className="mb-2">
+              <CaseQuestionStarters onSelect={setFollowUpQuestion} disabled={isAsking} />
+            </div>
+            <label htmlFor="case-copilot-follow-up-question" className="mb-1.5 block text-xs font-medium text-fg-muted">
+              Ask a follow-up question
+            </label>
+            <textarea
+              id="case-copilot-follow-up-question"
+              rows={2}
+              value={followUpQuestion}
+              onChange={(e) => setFollowUpQuestion(e.target.value)}
+              disabled={isAsking}
+              placeholder="Ask a follow-up question…"
+              className="w-full resize-none rounded-md border border-border bg-bg-inset px-3 py-2 text-sm text-fg placeholder:text-fg-subtle focus:border-accent/50 focus:outline-none"
+            />
+            <div className="mt-2 flex justify-end">
+              <Button variant="primary" size="sm" disabled={!followUpQuestion.trim() || isAsking} onClick={submitFollowUp}>
+                <Send className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                {isAsking ? 'Asking…' : 'Ask'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {(hasGenerated || generateError !== null) && (
           <div className="mt-3 flex justify-end">
-            <Button variant="ghost" size="sm" onClick={() => reset()}>
+            <Button variant="ghost" size="sm" onClick={clear}>
               Clear
             </Button>
           </div>

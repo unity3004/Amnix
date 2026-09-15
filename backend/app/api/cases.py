@@ -63,7 +63,12 @@ from app.schemas.case import (
     CaseStatusUpdate,
     CaseUpdate,
 )
-from app.schemas.case_ai import CaseCopilotQuestionRequest, CaseCopilotResponse
+from app.schemas.case_ai import (
+    CaseCopilotFollowUpRequest,
+    CaseCopilotFollowUpResponse,
+    CaseCopilotQuestionRequest,
+    CaseCopilotResponse,
+)
 from app.schemas.copilot_audit import CopilotAuditListResponse, CopilotAuditResponse
 from app.services.alert_service import AlertNotFoundError, AlertService
 from app.services.case_copilot_service import CaseCopilotService, FocusedAlertNotLinkedError
@@ -393,6 +398,33 @@ def ask_case_copilot(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found") from exc
     except FocusedAlertNotLinkedError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    except AIProviderError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+
+@router.post("/{case_id}/copilot/follow-up", response_model=CaseCopilotFollowUpResponse)
+def ask_case_copilot_follow_up(
+    case_id: uuid.UUID,
+    payload: CaseCopilotFollowUpRequest,
+    current_user: AuthenticatedUser = Depends(get_current_user),
+    service: CaseCopilotService = Depends(get_case_copilot_service),
+) -> CaseCopilotFollowUpResponse:
+    """Step 13E: ask a follow-up question within the same Case-scoped
+    investigation conversation. Advisory only, strictly read-only --
+    never changes the case's status/priority/owner or any linked
+    alert/note/audit row. Conversation history is supplied by the client
+    on every call (see CaseCopilotFollowUpRequest); AMNIX does not
+    persist it. The case context and case-wide MITRE candidate set are
+    always reconstructed server-side from `case_id` alone -- `payload`
+    can supply only `question` and `history`, never a replacement
+    context, and never a `focused_alert_id` (see
+    CaseCopilotService.ask_case_follow_up for why a Case-scoped
+    follow-up never has a focused alert).
+    """
+    try:
+        return service.ask_case_follow_up(case_id, payload.question, payload.history)
+    except CaseNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found") from exc
     except AIProviderError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

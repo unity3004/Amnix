@@ -41,7 +41,15 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.schemas.ai import AITimelineEntry, FindingType, MitreAnalysisEntry
+from app.schemas.ai import (
+    MAX_HISTORY_MESSAGES,
+    MAX_HISTORY_TOTAL_CHARS,
+    AIConversationTurn,
+    AITimelineEntry,
+    CopilotMessage,
+    FindingType,
+    MitreAnalysisEntry,
+)
 
 MAX_CASE_QUESTION_LENGTH = 2000
 
@@ -68,6 +76,13 @@ MAX_BRIEF_UNCERTAINTIES = 10
 MAX_BRIEF_MITRE_ANALYSIS_ENTRIES = 10
 MAX_TIMELINE_SUMMARY_LENGTH = 1000
 MAX_REFS_PER_ITEM = 20
+
+# Step 13E: Case-scoped follow-up conversation bounds. Mirrors
+# app.schemas.ai's own MAX_FOLLOW_UP_ANSWER_LENGTH (3000) for the answer
+# text; MAX_HISTORY_MESSAGES/MAX_HISTORY_TOTAL_CHARS are reused directly
+# from app.schemas.ai (imported above) rather than redeclared, since a
+# conversation turn is not a Case-specific concept.
+MAX_CASE_FOLLOW_UP_ANSWER_LENGTH = 3000
 
 
 class AICaseAlertSummary(BaseModel):
@@ -185,16 +200,28 @@ class AICaseRequest(BaseModel):
     AIRequest: `system_instructions` is the only field that may ever
     carry a directive; `context` and `user_question` are always data.
 
-    No `conversation_history` field: Step 13D's approved scope is the
-    single-shot "Generate Investigation Brief" action only (§19's
-    follow-up extension is explicitly deferred -- see the final report's
-    Known Limitations).
+    Step 13E adds `conversation_history` as the same None-vs-list mode
+    discriminator app.schemas.ai.AIRequest already established:
+      - `None` (the default): a one-shot Generate Investigation Brief
+        request (CaseCopilotService.ask_about_case) -- the provider must
+        produce a CaseInvestigationBrief.
+      - a list (possibly empty): a Case-scoped follow-up request
+        (CaseCopilotService.ask_case_follow_up) -- the provider must
+        produce a CaseFollowUpAnswer instead.
+    Reuses AIConversationTurn verbatim (imported from app.schemas.ai) --
+    a conversation turn (role + content) is not a Case-specific concept,
+    so this is not duplicated the way AICaseContext/CaseInvestigationBrief
+    deliberately are. Every turn is exactly what the analyst's client
+    sent, mapped 1:1 from CopilotMessage by CaseCopilotService -- AMNIX
+    never edits, reorders, drops, or reinterprets a turn's declared role
+    or content, exactly like the alert-scoped pipeline.
     """
 
     model_config = ConfigDict(frozen=True)
 
     system_instructions: str
     context: AICaseContext
+    conversation_history: list[AIConversationTurn] | None = None
     user_question: str
 
 
@@ -299,4 +326,106 @@ class CaseCopilotResponse(BaseModel):
     model: str
     brief: CaseInvestigationBrief
     generated_at: datetime
+    usage: dict[str, Any] | None = None
+
+
+# =============================================================================
+# Step 13E: Case-scoped follow-up conversation
+# =============================================================================
+
+
+class CaseFollowUpAnswer(BaseModel):
+    """Provider output schema for a Case-scoped follow-up answer.
+
+    Deliberately smaller than CaseInvestigationBrief -- a follow-up
+    answers ONE question about an already-oriented case, it does not
+    re-run a full summary/timeline/uncertainty pass. Still fully
+    structured, strictly validated JSON, exactly like CaseInvestigationBrief
+    (see that schema's own docstring for why `extra="forbid"` and bounded
+    string/list lengths apply the same way here). Deliberately has NO
+    verdict/confidence pair, for the identical reason CaseInvestigationBrief
+    has none -- a Case has no single "is this malicious" question a
+    verdict could coherently answer, and that does not change mid-
+    conversation.
+
+    Every follow-up call rebuilds the case context WITHOUT a focused
+    alert (see CaseCopilotService.ask_case_follow_up -- the follow-up
+    endpoint accepts no `focused_alert_id`), so `supporting_event_refs`
+    will always be validated against an empty known-event-ref set and
+    must therefore always be an empty list in practice; the field still
+    exists (rather than being omitted) so the schema stays structurally
+    parallel to CaseKeyFinding/CaseEvidenceItem and so a future focused
+    follow-up extension would not need a new response shape.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    answer: Annotated[str, Field(min_length=1, max_length=MAX_CASE_FOLLOW_UP_ANSWER_LENGTH)]
+    supporting_alert_refs: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
+    supporting_event_refs: list[str] = Field(default_factory=list, max_length=MAX_REFS_PER_ITEM)
+    mitre_analysis: list[MitreAnalysisEntry] = Field(default_factory=list, max_length=MAX_BRIEF_MITRE_ANALYSIS_ENTRIES)
+    uncertainties: list[ShortStatement] = Field(default_factory=list, max_length=MAX_BRIEF_UNCERTAINTIES)
+    recommended_next_steps: list[ShortStatement] = Field(default_factory=list, max_length=MAX_BRIEF_NEXT_STEPS)
+
+
+class CaseCopilotFollowUpRequest(BaseModel):
+    """Input schema for POST /cases/{case_id}/copilot/follow-up.
+
+    Deliberately accepts ONLY `question` and `history` -- no `case_id`
+    (from the URL path), no `focused_alert_id`, and no evidence/events/
+    notes/audit/MITRE fields of any kind (Step 13E Phase 2: "the client
+    may submit only question + bounded conversation_history"). Everything
+    the Copilot reasons about is reconstructed server-side from `case_id`
+    alone on every call -- a client cannot supply a replacement case
+    context, and cannot smuggle a focused alert's telemetry into a
+    follow-up merely by naming one (there is no field to name it in).
+
+    `history` reuses CopilotMessage verbatim from app.schemas.ai -- same
+    reasoning as AICaseRequest.conversation_history reusing
+    AIConversationTurn: a conversation turn is not a Case-specific
+    concept. `_bounded_total_history_size` duplicates
+    CopilotFollowUpRequest's own validator body (not importable as a
+    bound validator without also inheriting that class), but reuses its
+    MAX_HISTORY_TOTAL_CHARS constant unchanged.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=MAX_CASE_QUESTION_LENGTH)
+    history: list[CopilotMessage] = Field(default_factory=list, max_length=MAX_HISTORY_MESSAGES)
+
+    @field_validator("question")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("question must not be blank")
+        return v
+
+    @field_validator("history")
+    @classmethod
+    def _bounded_total_history_size(cls, v: list[CopilotMessage]) -> list[CopilotMessage]:
+        total_chars = sum(len(message.content) for message in v)
+        if total_chars > MAX_HISTORY_TOTAL_CHARS:
+            raise ValueError(
+                f"history exceeds the maximum total size of {MAX_HISTORY_TOTAL_CHARS} characters "
+                f"(got {total_chars}); trim the conversation instead of resending everything"
+            )
+        return v
+
+
+class CaseCopilotFollowUpResponse(BaseModel):
+    """Output schema for POST /cases/{case_id}/copilot/follow-up."""
+
+    model_config = ConfigDict(frozen=True)
+
+    case_id: uuid.UUID
+    provider: str
+    model: str
+    answer: str
+    generated_at: datetime
+    supporting_alert_refs: list[str]
+    supporting_event_refs: list[str]
+    mitre_analysis: list[MitreAnalysisEntry]
+    uncertainties: list[str]
+    recommended_next_steps: list[str]
     usage: dict[str, Any] | None = None

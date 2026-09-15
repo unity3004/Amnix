@@ -1,5 +1,6 @@
 """CaseCopilotService: orchestrates Case -> AICaseContext -> provider
-call -> validated, reference-checked CaseCopilotResponse (Step 13D).
+call -> validated, reference-checked CaseCopilotResponse (Step 13D) or
+CaseCopilotFollowUpResponse (Step 13E).
 
 Sibling to app.services.copilot_service.CopilotService, deliberately NOT a
 generalization of it or a modification to it (see the Step 13D gate
@@ -29,18 +30,22 @@ from datetime import datetime, timezone
 
 from pydantic import ValidationError
 
+from pydantic import BaseModel
+
 from app.ai.case_context_builder import AICaseContextBuilder
 from app.ai.exceptions import AIProviderTransportError, AIProviderValidationError
-from app.ai.prompts import CURRENT_CASE_BRIEF_SYSTEM_INSTRUCTIONS
+from app.ai.prompts import CURRENT_CASE_BRIEF_SYSTEM_INSTRUCTIONS, CURRENT_CASE_FOLLOW_UP_SYSTEM_INSTRUCTIONS
 from app.ai.provider import AIProvider
 from app.models.alert import Alert
 from app.mitre.models import MitreTechnique
 from app.mitre.registry import get_techniques_for_rule
-from app.schemas.ai import AIResponse, MitreAnalysisEntry
+from app.schemas.ai import AIConversationRole, AIConversationTurn, AIResponse, CopilotMessage, MitreAnalysisEntry
 from app.schemas.case_ai import (
     AICaseContext,
     AICaseRequest,
+    CaseCopilotFollowUpResponse,
     CaseCopilotResponse,
+    CaseFollowUpAnswer,
     CaseInvestigationBrief,
     MAX_CASE_ALERTS_IN_CONTEXT,
     MAX_CASE_AUDIT_IN_CONTEXT,
@@ -159,7 +164,9 @@ class CaseCopilotService:
             response = self._generate(request, case_id=case_id)
             model_name = response.model
 
-            brief = self._parse_structured(response.content, provider_name=response.provider, case_id=case_id)
+            brief = self._parse_structured(
+                CaseInvestigationBrief, response.content, provider_name=response.provider, case_id=case_id
+            )
             cited_alert_refs, cited_event_refs = self._refs_cited_in_brief(brief)
             self._reject_fabricated_refs(
                 cited_alert_refs, cited_event_refs, ai_context, provider_name=response.provider, case_id=case_id
@@ -210,6 +217,126 @@ class CaseCopilotService:
             usage=response.usage,
         )
 
+    def ask_case_follow_up(
+        self, case_id: uuid.UUID, question: str, history: list[CopilotMessage]
+    ) -> CaseCopilotFollowUpResponse:
+        """Answer a Case-scoped follow-up question, optionally informed by
+        client-supplied prior conversation turns. Read-only, exactly like
+        ask_about_case() -- see that method's own docstring for the N+1
+        guarantee this shares. Unlike ask_about_case(), this method never
+        fetches a per-alert Investigation at all: a Case-scoped follow-up
+        accepts no `focused_alert_id` (Step 13E Phase 2 -- the client may
+        submit only `question` and bounded `history`), so the rebuilt
+        AICaseContext always has `focused_alert=None`, and therefore no
+        `evt-N` reference is ever offered or citable in a follow-up
+        answer -- only `alert-N` references.
+
+        CASE ISOLATION: `history` and `question` are the ONLY things this
+        method accepts from the caller. Everything else (the case, its
+        linked alerts, notes, audit, MITRE candidates) is independently
+        reconstructed from `case_id` alone, from the database, on every
+        call -- never accepted as input, so a client cannot supply a
+        replacement case context or borrow another case's evidence/MITRE
+        candidates. This also means the case is re-read fresh on every
+        follow-up turn: it may have changed (new alert linked, new note,
+        status change) since a prior turn in this same conversation, and
+        this method never assumes otherwise.
+
+        Audited exactly like ask_about_case() via the same
+        _record_copilot_audit helper, with request_type=CASE_FOLLOW_UP
+        and the real `history` so history_turn_count/the fingerprint
+        reflect what was actually supplied.
+        """
+        case = self._case_service.get_case(case_id)  # raises CaseNotFoundError
+        alerts = self._case_service.list_alerts(case_id)[:MAX_CASE_ALERTS_IN_CONTEXT]
+        notes = self._case_service.list_notes(case_id, limit=MAX_CASE_NOTES_IN_CONTEXT, offset=0)
+        audits = self._case_service.list_audits(case_id, limit=MAX_CASE_AUDIT_IN_CONTEXT, offset=0)
+
+        started = time.monotonic()
+        model_name: str | None = None
+        try:
+            mitre_candidates = self._union_mitre_candidates(alerts)
+            ai_context = self._context_builder.build(
+                case=case,
+                alerts=alerts,
+                notes=notes,
+                audits=audits,
+                mitre_candidates=mitre_candidates,
+            )
+
+            request = AICaseRequest(
+                system_instructions=CURRENT_CASE_FOLLOW_UP_SYSTEM_INSTRUCTIONS,
+                context=ai_context,
+                conversation_history=self._map_conversation_history(history),
+                user_question=question,
+            )
+            response = self._generate(request, case_id=case_id)
+            model_name = response.model
+
+            answer = self._parse_structured(
+                CaseFollowUpAnswer, response.content, provider_name=response.provider, case_id=case_id
+            )
+            cited_alert_refs, cited_event_refs = self._refs_cited_in_follow_up(answer)
+            self._reject_fabricated_refs(
+                cited_alert_refs, cited_event_refs, ai_context, provider_name=response.provider, case_id=case_id
+            )
+            normalized_mitre = self._normalize_mitre_entries(
+                answer.mitre_analysis, mitre_candidates, provider_name=response.provider, case_id=case_id
+            )
+            answer = answer.model_copy(update={"mitre_analysis": normalized_mitre})
+        except AIProviderTransportError:
+            self._record_copilot_audit(
+                case_id=case_id,
+                request_type=AuditRequestType.CASE_FOLLOW_UP,
+                model_name=model_name,
+                outcome=AuditOutcome.FAILURE,
+                validation_status=AuditValidationStatus.NOT_APPLICABLE,
+                http_status=502,
+                question=question,
+                history=history,
+                started=started,
+            )
+            raise
+        except AIProviderValidationError:
+            self._record_copilot_audit(
+                case_id=case_id,
+                request_type=AuditRequestType.CASE_FOLLOW_UP,
+                model_name=model_name,
+                outcome=AuditOutcome.FAILURE,
+                validation_status=AuditValidationStatus.FAILED,
+                http_status=502,
+                question=question,
+                history=history,
+                started=started,
+            )
+            raise
+
+        self._record_copilot_audit(
+            case_id=case_id,
+            request_type=AuditRequestType.CASE_FOLLOW_UP,
+            model_name=model_name,
+            outcome=AuditOutcome.SUCCESS,
+            validation_status=AuditValidationStatus.PASSED,
+            http_status=200,
+            question=question,
+            history=history,
+            started=started,
+        )
+
+        return CaseCopilotFollowUpResponse(
+            case_id=case_id,
+            provider=response.provider,
+            model=response.model,
+            answer=answer.answer,
+            generated_at=datetime.now(timezone.utc),
+            supporting_alert_refs=answer.supporting_alert_refs,
+            supporting_event_refs=answer.supporting_event_refs,
+            mitre_analysis=answer.mitre_analysis,
+            uncertainties=answer.uncertainties,
+            recommended_next_steps=answer.recommended_next_steps,
+            usage=response.usage,
+        )
+
     def _record_copilot_audit(
         self,
         *,
@@ -220,30 +347,50 @@ class CaseCopilotService:
         http_status: int,
         question: str,
         started: float,
+        request_type: AuditRequestType = AuditRequestType.CASE_BRIEF,
+        history: Sequence[CopilotMessage] = (),
     ) -> None:
         """Mirrors CopilotService._record_copilot_audit exactly (see that
         method's own extensive docstring for the full "never raises, log
         and continue" contract) — an independent implementation, not a
         shared helper, because it audits a case_id, not an alert_id.
+
+        Step 13E: `request_type`/`history` are now parameters (defaulting
+        to CASE_BRIEF/empty, so ask_about_case()'s own call sites above
+        are unchanged) so ask_case_follow_up() can record its own real
+        request_type and conversation history the same way
+        CopilotService's shared _record_copilot_audit already does for
+        ask()/follow_up().
         """
         duration_ms = max(0, round((time.monotonic() - started) * 1000))
         try:
             self._copilot_audit_service.record(
                 case_id=case_id,
-                request_type=AuditRequestType.CASE_BRIEF,
+                request_type=request_type,
                 provider_name=self._provider.name,
                 model_name=model_name,
                 outcome=outcome,
                 validation_status=validation_status,
                 http_status=http_status,
                 question=question,
-                history=(),
+                history=history,
                 duration_ms=duration_ms,
             )
         except Exception:
             logger.exception(
                 "Failed to record Copilot audit for case %s (outcome=%s)", case_id, outcome.value
             )
+
+    @staticmethod
+    def _map_conversation_history(history: list[CopilotMessage]) -> list[AIConversationTurn]:
+        """Maps client-supplied CopilotMessage turns 1:1 into
+        AIConversationTurn — same role, same content, unmodified,
+        unreordered, unfiltered. Mirrors
+        CopilotService._map_conversation_history exactly (independent
+        implementation, not a shared helper, per this file's own
+        top-of-module rationale).
+        """
+        return [AIConversationTurn(role=AIConversationRole(turn.role.value), content=turn.content) for turn in history]
 
     def _generate(self, request: AICaseRequest, *, case_id: uuid.UUID) -> AIResponse:
         try:
@@ -257,16 +404,24 @@ class CaseCopilotService:
             raise AIProviderTransportError("The AI provider failed to generate a response.") from exc
 
     @staticmethod
-    def _parse_structured(content: str, *, provider_name: str, case_id: uuid.UUID) -> CaseInvestigationBrief:
+    def _parse_structured(
+        schema_cls: type[BaseModel], content: str, *, provider_name: str, case_id: uuid.UUID
+    ) -> BaseModel:
+        """Step 13E: `schema_cls` is now a parameter (CaseInvestigationBrief
+        for ask_about_case(), CaseFollowUpAnswer for ask_case_follow_up())
+        -- mirrors CopilotService._parse_structured's own shape exactly,
+        one implementation shared by both call sites in this file.
+        """
         try:
-            return CaseInvestigationBrief.model_validate_json(content)
+            return schema_cls.model_validate_json(content)
         except ValidationError as exc:
             # Never log `content` itself: it is the provider's raw
             # structured output and may echo back case-derived data.
             logger.error(
-                "Provider '%s' returned a response that failed CaseInvestigationBrief validation for "
+                "Provider '%s' returned a response that failed %s validation for "
                 "case %s (error_count=%d)",
                 provider_name,
+                schema_cls.__name__,
                 case_id,
                 exc.error_count(),
             )
@@ -287,6 +442,14 @@ class CaseCopilotService:
             if item.event_ref is not None:
                 event_refs.add(item.event_ref)
         for mitre_entry in brief.mitre_analysis:
+            event_refs.update(mitre_entry.supporting_event_refs)
+        return alert_refs, event_refs
+
+    @staticmethod
+    def _refs_cited_in_follow_up(answer: CaseFollowUpAnswer) -> tuple[set[str], set[str]]:
+        alert_refs: set[str] = set(answer.supporting_alert_refs)
+        event_refs: set[str] = set(answer.supporting_event_refs)
+        for mitre_entry in answer.mitre_analysis:
             event_refs.update(mitre_entry.supporting_event_refs)
         return alert_refs, event_refs
 

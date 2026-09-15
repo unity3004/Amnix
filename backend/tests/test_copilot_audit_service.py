@@ -715,6 +715,90 @@ def test_record_case_brief_does_not_change_case_status_or_priority(db_session):
 
 
 # =============================================================================
+# Step 13E: case_follow_up scope -- record()
+# =============================================================================
+
+
+@pytest.mark.integration
+def test_record_creates_a_case_follow_up_audit_with_history_turn_count(db_session):
+    case = _make_case(db_session)
+    service = _case_service(db_session)
+    history = [
+        CopilotMessage(role=CopilotMessageRole.USER, content="Why is this suspicious?"),
+        CopilotMessage(role=CopilotMessageRole.ASSISTANT, content="Because of repeated failures."),
+    ]
+
+    audit = service.record(
+        case_id=case.id,
+        request_type=AuditRequestType.CASE_FOLLOW_UP,
+        provider_name="mock",
+        model_name="amnix-mock-v1",
+        outcome=AuditOutcome.SUCCESS,
+        validation_status=AuditValidationStatus.PASSED,
+        http_status=200,
+        question="What next?",
+        history=history,
+    )
+
+    assert audit.request_type == "case_follow_up"
+    assert audit.history_turn_count == 2
+    assert audit.case_id == case.id
+    assert audit.alert_id is None
+
+
+@pytest.mark.integration
+def test_record_case_follow_up_with_empty_history_records_zero_turns(db_session):
+    case = _make_case(db_session)
+    service = _case_service(db_session)
+
+    audit = service.record(
+        case_id=case.id, request_type=AuditRequestType.CASE_FOLLOW_UP, provider_name="mock",
+        model_name="amnix-mock-v1", outcome=AuditOutcome.SUCCESS, validation_status=AuditValidationStatus.PASSED,
+        http_status=200, question="What next?", history=[],
+    )
+
+    assert audit.history_turn_count == 0
+
+
+@pytest.mark.integration
+def test_list_for_case_returns_both_case_brief_and_case_follow_up_rows(db_session):
+    case = _make_case(db_session)
+    service = _case_service(db_session)
+
+    service.record(
+        case_id=case.id, request_type=AuditRequestType.CASE_BRIEF, provider_name="mock",
+        model_name="amnix-mock-v1", outcome=AuditOutcome.SUCCESS, validation_status=AuditValidationStatus.PASSED,
+        http_status=200, question="Initial.",
+    )
+    service.record(
+        case_id=case.id, request_type=AuditRequestType.CASE_FOLLOW_UP, provider_name="mock",
+        model_name="amnix-mock-v1", outcome=AuditOutcome.SUCCESS, validation_status=AuditValidationStatus.PASSED,
+        http_status=200, question="Follow-up.", history=[],
+    )
+
+    results = service.list_for_case(case.id)
+
+    assert len(results) == 2
+    assert {r.request_type for r in results} == {"case_brief", "case_follow_up"}
+
+
+@pytest.mark.integration
+def test_record_case_follow_up_does_not_change_case_status_or_priority(db_session):
+    case = _make_case(db_session)
+    service = _case_service(db_session)
+
+    service.record(
+        case_id=case.id, request_type=AuditRequestType.CASE_FOLLOW_UP, provider_name="mock",
+        model_name="amnix-mock-v1", outcome=AuditOutcome.SUCCESS, validation_status=AuditValidationStatus.PASSED,
+        http_status=200, question="Should I close this case?", history=[],
+    )
+
+    db_session.refresh(case)
+    assert case.status == "OPEN"
+    assert case.owner_id is None
+
+
+# =============================================================================
 # Security regression -- structural checks over the repository/service
 # =============================================================================
 

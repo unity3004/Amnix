@@ -30,15 +30,17 @@ from pydantic import BaseModel, ConfigDict
 class AuditRequestType(str, Enum):
     """Which service method produced this call: CopilotService.ask() (an
     initial alert-scoped structured assessment), CopilotService.follow_up()
-    (an alert-scoped follow-up question), or (Step 13D)
+    (an alert-scoped follow-up question), (Step 13D)
     CaseCopilotService.ask_about_case() (a Case-scoped investigation
-    brief). Matches app.models.copilot_audit's
+    brief), or (Step 13E) CaseCopilotService.ask_case_follow_up() (a
+    Case-scoped follow-up question). Matches app.models.copilot_audit's
     ck_copilot_audits_request_type_valid.
     """
 
     ASK = "ask"
     FOLLOW_UP = "follow_up"
     CASE_BRIEF = "case_brief"
+    CASE_FOLLOW_UP = "case_follow_up"
 
 
 class AuditOutcome(str, Enum):

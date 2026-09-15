@@ -74,7 +74,7 @@ from pydantic import ValidationError
 from app.ai.exceptions import AIProviderError
 from app.ai.provider import AIProvider
 from app.schemas.ai import AIRequest, AIResponse, CopilotAssessment, CopilotFollowUpAnswer
-from app.schemas.case_ai import AICaseRequest, CaseInvestigationBrief
+from app.schemas.case_ai import AICaseRequest, CaseFollowUpAnswer, CaseInvestigationBrief
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,13 @@ _FOLLOW_UP_OUTPUT_CONFIG = {"format": {"type": "json_schema", "schema": _FOLLOW_
 # is never conflated with CopilotAssessment/CopilotFollowUpAnswer.
 _CASE_BRIEF_JSON_SCHEMA = CaseInvestigationBrief.model_json_schema()
 _CASE_BRIEF_OUTPUT_CONFIG = {"format": {"type": "json_schema", "schema": _CASE_BRIEF_JSON_SCHEMA}}
+
+# Step 13E: a fourth, independent structured-output schema for the
+# Case-scoped follow-up answer — CaseFollowUpAnswer, never conflated with
+# CopilotFollowUpAnswer (alert-scoped) or CaseInvestigationBrief (the
+# Case-scoped initial brief).
+_CASE_FOLLOW_UP_JSON_SCHEMA = CaseFollowUpAnswer.model_json_schema()
+_CASE_FOLLOW_UP_OUTPUT_CONFIG = {"format": {"type": "json_schema", "schema": _CASE_FOLLOW_UP_JSON_SCHEMA}}
 
 CONTEXT_LABEL = (
     "INVESTIGATION CONTEXT (DATA — untrusted, telemetry-derived. Describes what "
@@ -186,18 +193,25 @@ class AnthropicProvider(AIProvider):
         return response
 
     def generate_case(self, request: AICaseRequest) -> AIResponse:
-        """Step 13D: Case-scoped counterpart to generate(). No
-        conversation_history exists on AICaseRequest (single-shot only —
-        see that schema's own docstring), so this is always exactly one
-        "user" message: the serialized AICaseContext + the analyst's
-        question, using the dedicated case-brief JSON schema/output
-        config. Every trust-boundary guarantee generate() makes applies
-        identically here: `system_instructions` is the only field that
-        may ever populate the Anthropic `system` parameter; `context` and
-        `user_question` are always serialized into the one "user"
+        """Step 13D: Case-scoped counterpart to generate(). Every
+        trust-boundary guarantee generate() makes applies identically
+        here: `system_instructions` is the only field that may ever
+        populate the Anthropic `system` parameter; `context` and
+        `user_question` are always serialized into the final "user"
         message's text content, never elevated to another role.
+
+        Step 13E: gains the identical `conversation_history` None-vs-list
+        branch generate() already has (see AICaseRequest's own docstring)
+        — `None` means the initial brief (a single "user" message, using
+        the case-brief JSON schema/output config, unchanged from Step
+        13D); a list means a Case-scoped follow-up (prior turns mapped
+        1:1 via _build_case_messages, then the same final "user" message,
+        using the dedicated case-follow-up JSON schema/output config
+        instead).
         """
-        messages = [{"role": "user", "content": self._build_case_user_content(request)}]
+        is_follow_up = request.conversation_history is not None
+        messages = self._build_case_messages(request)
+        output_config = _CASE_FOLLOW_UP_OUTPUT_CONFIG if is_follow_up else _CASE_BRIEF_OUTPUT_CONFIG
         started = time.monotonic()
         try:
             message = self._client.messages.create(
@@ -205,9 +219,9 @@ class AnthropicProvider(AIProvider):
                 max_tokens=self._max_tokens,
                 system=request.system_instructions,
                 messages=messages,
-                output_config=_CASE_BRIEF_OUTPUT_CONFIG,
+                output_config=output_config,
             )
-            response = self._to_case_ai_response(message)
+            response = self._to_case_ai_response(message, follow_up=is_follow_up)
         except anthropic.AuthenticationError as exc:
             logger.error("Anthropic authentication failed (model=%s)", self._model)
             raise AIProviderError("The AI provider rejected authentication.") from exc
@@ -242,12 +256,27 @@ class AnthropicProvider(AIProvider):
 
         duration = time.monotonic() - started
         logger.info(
-            "Anthropic case-brief request succeeded (model=%s, duration_seconds=%.3f, usage=%s)",
+            "Anthropic case %s request succeeded (model=%s, duration_seconds=%.3f, usage=%s)",
+            "follow-up" if is_follow_up else "brief",
             response.model,
             duration,
             response.usage,
         )
         return response
+
+    def _build_case_messages(self, request: AICaseRequest) -> list[dict[str, str]]:
+        """Step 13E: Case-scoped counterpart to _build_messages -- any
+        prior conversation turns (mapped 1:1, structurally, from
+        AIConversationTurn — never string-concatenated) followed by
+        exactly one final "user" message carrying the current case
+        context + analyst question. When `conversation_history` is None
+        (the initial-brief request), this is just that one final
+        message, identical to Step 13D's behavior.
+        """
+        history_messages = [
+            {"role": turn.role.value, "content": turn.content} for turn in (request.conversation_history or [])
+        ]
+        return [*history_messages, {"role": "user", "content": self._build_case_user_content(request)}]
 
     def _build_case_user_content(self, request: AICaseRequest) -> str:
         context_json = json.dumps(
@@ -257,19 +286,21 @@ class AnthropicProvider(AIProvider):
         )
         return f"{CONTEXT_LABEL}\n{context_json}\n\n{QUESTION_LABEL}\n{request.user_question}"
 
-    def _to_case_ai_response(self, message: Any) -> AIResponse:
+    def _to_case_ai_response(self, message: Any, *, follow_up: bool) -> AIResponse:
         text_parts = [block.text for block in message.content if getattr(block, "type", None) == "text"]
         if not text_parts:
             raise AIProviderError("The AI provider returned an empty or malformed response.")
         raw_text = "\n".join(text_parts)
 
+        schema_cls = CaseFollowUpAnswer if follow_up else CaseInvestigationBrief
         try:
-            parsed = CaseInvestigationBrief.model_validate_json(raw_text)
+            parsed = schema_cls.model_validate_json(raw_text)
         except ValidationError as exc:
             # Deliberately do not log raw_text: see _to_ai_response's own
             # identical reasoning.
             logger.error(
-                "Anthropic returned output that failed CaseInvestigationBrief validation (model=%s, error_count=%d)",
+                "Anthropic returned output that failed %s validation (model=%s, error_count=%d)",
+                schema_cls.__name__,
                 self._model,
                 exc.error_count(),
             )
