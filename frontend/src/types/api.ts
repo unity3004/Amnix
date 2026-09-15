@@ -307,7 +307,7 @@ export interface CopilotFollowUpResponse {
 // Copilot Audits (app/schemas/copilot_audit.py)
 // ---------------------------------------------------------------------------
 
-export type CopilotAuditRequestType = 'ask' | 'follow_up' | 'case_brief'
+export type CopilotAuditRequestType = 'ask' | 'follow_up' | 'case_brief' | 'case_follow_up'
 export type CopilotAuditOutcome = 'success' | 'failure'
 export type CopilotAuditValidationStatus = 'passed' | 'failed' | 'not_applicable'
 

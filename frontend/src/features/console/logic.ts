@@ -37,10 +37,27 @@ import type {
   CaseAuditResponse,
   CaseNoteResponse,
   CaseRead,
+  CopilotAuditRequestType,
   CopilotAuditResponse,
   DetectionSeverity,
   TimelineEntry,
 } from '@/types/api'
+
+/** Exhaustive over all 4 CopilotAuditRequestType values (an object index
+ * signature, not a two-way ternary) so a future case-scoped audit ever
+ * reaching this Console timeline is labeled correctly by construction,
+ * rather than silently falling into an "else" branch meant for a
+ * different request type. In the Console's own current wiring this only
+ * ever receives alert-scoped ('ask'/'follow_up') rows (see
+ * buildIncidentTimeline's own `focusedAlertCopilotAudits` param), but the
+ * type itself is shared with the Case-scoped Copilot audit trail.
+ */
+export const COPILOT_AUDIT_TITLE_BY_REQUEST_TYPE: Record<CopilotAuditRequestType, string> = {
+  ask: 'Copilot asked',
+  follow_up: 'Copilot follow-up asked',
+  case_brief: 'Case investigation brief generated',
+  case_follow_up: 'Case Copilot follow-up asked',
+}
 
 // ---------------------------------------------------------------------------
 // Evidence grouping (Phase "EVIDENCE GROUPING")
@@ -420,7 +437,7 @@ export function buildIncidentTimeline(input: {
       id: `copilot-${audit.id}`,
       timestamp: audit.created_at,
       category: 'Copilot',
-      title: audit.request_type === 'ask' ? 'Copilot asked' : 'Copilot follow-up asked',
+      title: COPILOT_AUDIT_TITLE_BY_REQUEST_TYPE[audit.request_type],
       description: `${audit.outcome}${audit.model_name ? ` · ${audit.provider_name} · ${audit.model_name}` : ` · ${audit.provider_name}`}`,
       actor: null,
     })

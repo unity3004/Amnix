@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { buildCaseContextQuery } from '@/features/cases/caseNavigationContext'
+import { COPILOT_AUDIT_TITLE_BY_REQUEST_TYPE } from '../logic'
 import type { CaseRead, CopilotAuditResponse } from '@/types/api'
 
 /** Deliberately shows only what GET /alerts/{id}/copilot/audits actually
@@ -51,7 +52,7 @@ export function CopilotSummaryPanel({
           <dl className="grid grid-cols-2 gap-3 text-sm">
             <div>
               <dt className="text-[11px] uppercase tracking-wide text-fg-subtle">Last Request</dt>
-              <dd className="mt-0.5 text-fg">{latest.request_type === 'ask' ? 'Initial assessment' : 'Follow-up question'}</dd>
+              <dd className="mt-0.5 text-fg">{COPILOT_AUDIT_TITLE_BY_REQUEST_TYPE[latest.request_type]}</dd>
             </div>
             <div>
               <dt className="text-[11px] uppercase tracking-wide text-fg-subtle">Outcome</dt>
